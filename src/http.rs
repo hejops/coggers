@@ -1,8 +1,10 @@
 use std::env;
 
+use reqwest::blocking::Response;
 use reqwest::header::AUTHORIZATION;
 use reqwest::header::CACHE_CONTROL;
 use reqwest::header::USER_AGENT;
+use serde_json::Value;
 
 pub const API_PREFIX: &str = "https://api.discogs.com";
 
@@ -22,8 +24,6 @@ impl Credentials {
 pub fn make_request(url_fragment: &str) -> Result<reqwest::blocking::Response, reqwest::Error> {
     let creds = Credentials::build();
 
-    // reqwest::blocking::get(url)
-
     let client = reqwest::blocking::Client::new();
     client
         .get(API_PREFIX.to_string() + url_fragment)
@@ -31,4 +31,9 @@ pub fn make_request(url_fragment: &str) -> Result<reqwest::blocking::Response, r
         .header(CACHE_CONTROL, "no-cache")
         .header(AUTHORIZATION, "Discogs token=".to_string() + &creds.token)
         .send()
+}
+
+// https://github.com/serde-rs/json?tab=readme-ov-file#parsing-json-as-strongly-typed-data-structures
+pub fn parse_json(resp: Response) -> Value {
+    serde_json::from_str(resp.text().unwrap().as_str()).unwrap()
 }
