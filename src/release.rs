@@ -6,8 +6,9 @@ use crate::http;
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct Release {
     pub id: u32,
-    pub uri: String,
     pub year: u32,
+    pub uri: String,
+    pub genres: Vec<String>,
 }
 
 pub fn get_release(release_id: usize) -> Option<Release> {

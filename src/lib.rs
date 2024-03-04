@@ -12,6 +12,7 @@ mod tests {
         let rel: Release = get_release(8196883).unwrap();
         assert_eq!(rel.year, 1998);
         assert_eq!(rel.id, 8196883);
+        assert_eq!(rel.genres, vec!["Classical"]);
     }
 
     #[test]
