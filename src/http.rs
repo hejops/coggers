@@ -9,15 +9,18 @@ use serde_json::Value;
 pub const API_PREFIX: &str = "https://api.discogs.com";
 
 struct Credentials {
-    username: String,
+    // username: String,
     token: String,
 }
 impl Credentials {
     fn build() -> Self {
-        let username = env::var("DISCOGS_USERNAME").unwrap();
-        let token = env::var("DISCOGS_TOKEN").unwrap();
+        // let username = env::var("DISCOGS_USERNAME").expect("env var");
+        let token = env::var("DISCOGS_TOKEN").expect("env var");
 
-        Credentials { username, token }
+        Credentials {
+            // username,
+            token,
+        }
     }
 }
 
@@ -33,7 +36,8 @@ pub fn make_request(url_fragment: &str) -> Result<reqwest::blocking::Response, r
         .send()
 }
 
-// https://github.com/serde-rs/json?tab=readme-ov-file#parsing-json-as-strongly-typed-data-structures
+/// transform json response to serde Value
 pub fn parse_json(resp: Response) -> Value {
+    // https://github.com/serde-rs/json?tab=readme-ov-file#parsing-json-as-strongly-typed-data-structures
     serde_json::from_str(resp.text().unwrap().as_str()).unwrap()
 }
