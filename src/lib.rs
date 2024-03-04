@@ -3,18 +3,19 @@ pub mod release;
 
 #[cfg(test)]
 mod tests {
+    use crate::release::get_release;
+    use crate::release::Release;
+
     #[test]
-    fn test_request() {
-        use crate::http;
-        use crate::release::Release;
-
+    fn test_release() {
         // https://www.discogs.com/release/8196883
-        let resp = http::make_request("/releases/8196883").unwrap();
-
-        assert_eq!(resp.status(), 200);
-
-        let rel: Release = serde_json::from_str(resp.text().unwrap().as_str()).unwrap();
+        let rel: Release = get_release(8196883).unwrap();
         assert_eq!(rel.year, 1998);
         assert_eq!(rel.id, 8196883);
+    }
+
+    #[test]
+    fn test_nonexistent_release() {
+        assert_eq!(get_release(0), None);
     }
 }
