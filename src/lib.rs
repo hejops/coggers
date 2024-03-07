@@ -4,14 +4,13 @@ pub mod search;
 
 #[cfg(test)]
 mod tests {
-    use crate::release::get_release;
     use crate::release::Release;
     use crate::search::search_release;
 
     #[test]
     fn test_release() {
         // https://www.discogs.com/release/8196883
-        let rel: Release = get_release(8196883).unwrap();
+        let rel = Release::get(8196883).unwrap();
         assert_eq!(rel.year, 1998);
         assert_eq!(rel.uri, "https://www.discogs.com/release/8196883-Monica-Groop-Ostrobothnian-Chamber-Orchestra-Conductor-Juha-Kangas-Bach-Alto-Cantatas");
         assert_eq!(rel.id, 8196883);
@@ -26,11 +25,13 @@ mod tests {
             rel.tracklist[1].sub_tracks.as_ref().unwrap()[0].title,
             "Aria \"Vergnügte Ruh, Beliebte Seelenlust\"",
         );
+
+        assert_eq!(rel.parse_tracklist().len(), 19);
     }
 
     #[test]
     fn test_nonexistent_release() {
-        assert_eq!(get_release(0), None);
+        assert_eq!(Release::get(0), None);
     }
 
     #[test]
