@@ -6,7 +6,7 @@ use reqwest::header::CACHE_CONTROL;
 use reqwest::header::USER_AGENT;
 use serde_json::Value;
 
-pub const API_PREFIX: &str = "https://api.discogs.com";
+const API_PREFIX: &str = "https://api.discogs.com";
 
 struct Credentials {
     // username: String,
@@ -39,5 +39,6 @@ pub fn make_request(url_fragment: &str) -> Result<reqwest::blocking::Response, r
 /// transform json response to serde Value
 pub fn parse_json(resp: Response) -> Value {
     // https://github.com/serde-rs/json?tab=readme-ov-file#parsing-json-as-strongly-typed-data-structures
+    // TODO: return type generic (Release, Master, Artist)
     serde_json::from_str(resp.text().unwrap().as_str()).unwrap()
 }

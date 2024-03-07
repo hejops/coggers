@@ -1,10 +1,12 @@
 pub mod http; // re-export for main, and to silence dead_code
 pub mod release;
+pub mod search;
 
 #[cfg(test)]
 mod tests {
     use crate::release::get_release;
     use crate::release::Release;
+    use crate::search::search_release;
 
     #[test]
     fn test_release() {
@@ -29,5 +31,19 @@ mod tests {
     #[test]
     fn test_nonexistent_release() {
         assert_eq!(get_release(0), None);
+    }
+
+    #[test]
+    fn test_big_search() {
+        let album = "ride the lightning";
+        let artist = "metallica";
+        assert_eq!(search_release(artist, album).unwrap().len(), 50);
+    }
+
+    #[test]
+    fn test_empty_search() {
+        let album = "djsakldjsakl";
+        let artist = "metallica";
+        assert_eq!(search_release(artist, album), None);
     }
 }
