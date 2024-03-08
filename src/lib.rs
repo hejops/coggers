@@ -1,9 +1,12 @@
 pub mod http; // re-export for main, and to silence dead_code
+pub mod io;
 pub mod release;
 pub mod search;
 
 #[cfg(test)]
 mod tests {
+    use crate::io::walk;
+    use crate::io::AlbumDir;
     use crate::release::Release;
     use crate::search::search_release;
 
@@ -46,5 +49,10 @@ mod tests {
         let album = "djsakldjsakl";
         let artist = "metallica";
         assert_eq!(search_release(artist, album), None);
+    }
+
+    #[test]
+    fn test_album_dir() {
+        assert!(AlbumDir::from_path(walk().next().unwrap()).is_ok());
     }
 }
