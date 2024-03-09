@@ -13,10 +13,13 @@ use walkdir::WalkDir;
 
 pub fn walk() -> impl Iterator<Item = DirEntry> {
     let d = env::var("MU").expect("env var"); // TODO: lazy_static
+
     WalkDir::new(d)
+        .min_depth(2)
+        .max_depth(2)
         .into_iter()
-        .map(|entry| entry.unwrap())
-        .filter(|entry| entry.file_type().is_dir() && entry.depth() == 2)
+        .filter_entry(|e| e.file_type().is_dir())
+        .filter_map(|e| e.ok())
     // returning a Filter at compile time is relatively easy, returning a Map is
     // not -- https://stackoverflow.com/a/27497032
     // .map(|entry| entry.path().strip_prefix(d).unwrap())
