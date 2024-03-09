@@ -1,7 +1,10 @@
 use std::env;
+use std::fs::remove_file;
+use std::path::Path;
 
 use anyhow::anyhow;
 use anyhow::Result;
+use rusqlite::Connection;
 use walkdir::DirEntry;
 use walkdir::WalkDir;
 
@@ -58,3 +61,48 @@ impl AlbumDir {
         })
     }
 }
+
+/// Traverse the music directory and dump all results in a sqlite3 database.
+///
+/// 10.5 min / 4 TB / 59 k albums (cold?, late depth filter)
+/// 2 min / 4 TB / 59 k albums (warm?, early depth filter)
+pub fn dump_db() -> rusqlite::Result<()> {
+    if Path::new("test.db").exists() {
+        remove_file("test.db").unwrap();
+    };
+    let conn = Connection::open("test.db")?;
+
+    conn.execute(
+        "create table if not exists albums (
+             artist text not null,
+             album text not null,
+             year integer not null
+         )",
+        [],
+    )?;
+
+    for a in walk().map(AlbumDir::from_path).filter_map(|a| a.ok())
+    // note to self: trying to be lazy all the way means the side effects do not get executed!
+    // .map(|a| { conn.execute(...) } )
+    {
+        conn.execute(
+            "INSERT INTO albums (artist, album, year) values (?1, ?2, ?3)",
+            [a.artist, a.album, a.year.to_string()],
+        )?;
+    }
+
+    Ok(())
+}
+
+// let mut stmt = conn.prepare("select * from albums;")?;
+// let entries: Vec<AlbumDir> = stmt
+//     .query_map([], |row| {
+//         Ok(AlbumDir {
+//             artist: row.get(0)?,
+//             album: row.get(1)?,
+//             year: row.get(2)?,
+//         })
+//     })?
+//     .filter_map(|e| e.ok())
+//     .collect();
+// println!("{:#?}", entries);
