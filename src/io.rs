@@ -4,6 +4,7 @@ use std::path::Path;
 
 use anyhow::anyhow;
 use anyhow::Result;
+use lazy_static::lazy_static; // see also: https://github.com/matklad/once_cell
 use rusqlite::Connection;
 use walkdir::DirEntry;
 use walkdir::WalkDir;
@@ -14,10 +15,13 @@ use walkdir::WalkDir;
 // hyperfine 'cargo run >/dev/null'
 //   Time (mean ± σ):      1.631 s ±  0.219 s
 
-pub fn walk() -> impl Iterator<Item = DirEntry> {
-    let d = env::var("MU").expect("env var"); // TODO: lazy_static
+lazy_static! {
+    // TODO: load from config file
+    static ref LIBRARY_ROOT: String = env::var("MU").expect("Environment variable $MU must be set");
+}
 
-    WalkDir::new(d)
+pub fn walk() -> impl Iterator<Item = DirEntry> {
+    WalkDir::new(LIBRARY_ROOT.as_str())
         .min_depth(2)
         .max_depth(2)
         .into_iter()
@@ -37,8 +41,7 @@ pub struct AlbumDir {
 impl AlbumDir {
     /// Parse path in the form 'artist/album (year)'
     pub fn from_path(path: DirEntry) -> Result<Self> {
-        let d = env::var("MU").expect("env var");
-        let path = path.path().strip_prefix(d)?;
+        let path = path.path().strip_prefix(LIBRARY_ROOT.as_str())?;
         let mut path_iter = path
             .to_str()
             .ok_or_else(|| anyhow!("could not convert path to string"))?
