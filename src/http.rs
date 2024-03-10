@@ -13,19 +13,19 @@ const API_PREFIX: &str = "https://api.discogs.com";
 
 // fn get_current_epoch() -> u64 {}
 
-struct Credentials {
-    // username: String,
+pub struct Credentials {
+    username: String,
     token: String,
     timestamps: Vec<u64>,
 }
 impl Credentials {
     fn build() -> Self {
-        // let username = env::var("DISCOGS_USERNAME").expect("env var");
+        let username = env::var("DISCOGS_USERNAME").expect("env var");
         let token = env::var("DISCOGS_TOKEN").expect("env var");
         let timestamps = vec![];
 
         Credentials {
-            // username,
+            username,
             token,
             timestamps,
         }
@@ -56,10 +56,29 @@ impl Credentials {
     }
 }
 
-pub fn make_request(url_fragment: &str) -> Result<Response, reqwest::Error> {
-    assert!(url_fragment.starts_with('/'));
+pub enum RequestType {
+    Release,
+    Artist,
+    Label,
+    Collection,
+    Search,
+}
 
+/// Most request types do not require the username, except collection. The
+/// request type is specified as we do not expose Credentials.
+pub fn make_request(
+    request_type: RequestType,
+    query: &str,
+) -> Result<Response, reqwest::Error> {
     let mut creds = Credentials::build();
+
+    let url_fragment = match request_type {
+        RequestType::Collection => format!("/users/{}/{query}", creds.username),
+        RequestType::Release => format!("/releases/{query}"),
+        RequestType::Search => query.to_string(),
+        // artist, label
+        _ => unimplemented!(),
+    };
 
     creds.add_timestamp(); // this should be done during/after the request, but that seems non-trivial
     creds.check_timestamps();
@@ -79,3 +98,8 @@ pub fn parse_json(resp: Response) -> Value {
     // TODO: return type generic (Release, Master, Artist)
     serde_json::from_str(resp.text().unwrap().as_str()).unwrap()
 }
+
+// #[test]
+// fn test_request_count() {
+//     // not sure how to test this yet
+// }
