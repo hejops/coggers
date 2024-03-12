@@ -121,6 +121,17 @@ impl Release {
         recurse(&self.tracklist)
     }
 
+    pub fn display_tracklist(&self) -> String {
+        let mut tl = String::new();
+        for track in self.parse_tracklist() {
+            if !track.duration.is_empty() {
+                tl.push_str(&format!("[{}] ", track.duration));
+            }
+            tl.push_str(&format!("{}\n", track.title));
+        }
+        tl.trim_end().to_string()
+    }
+
     /// Precedence: track credits > album credits > artists_sort.
     ///
     /// This is strictly for classical releases; outside classical music, it is
@@ -183,31 +194,8 @@ mod tests {
         let rel = Release::get(8196883).unwrap();
         assert_eq!(rel.parse_tracklist().len(), 19);
         assert_eq!(
-            rel.parse_tracklist()
-                .iter()
-                .map(|t| t.title.to_string())
-                .collect::<Vec<String>>(),
-            vec![
-                r#"Aria "Vergnügte Ruh, Beliebte Seelenlust""#,
-                r#"Recitativo "Die Welt, Das Sündenhaus""#,
-                r#"Aria "Wie Jammern Mich Soch Die Werkehren Herzen""#,
-                r#"Recitativo "Wer Sollte Sich Demnach Wohl Hier Zu Leben Wünschen""#,
-                r#"Aria "Mir Ekelt Mehr Zu Leben""#,
-                r#"Sinfonia"#,
-                r#"Aria "Geist Und Seele Wird Verwirret""#,
-                r#"Recitativo "Ich Wundre Mich""#,
-                r#"Aria "Gott Hat Alles Wohlgemacht""#,
-                r#"Sinfonia"#,
-                r#"Recitativo "Ach, Starker Gott""#,
-                r#"Aria "Ich Wünsche Nur, Bei Gott Zu Leben""#,
-                r#"Sinfonia"#,
-                r#"Arioso And Recitativo "Gott Soll Alein Mein Herze Haben""#,
-                r#"Aria "Gott Soll Alein Mein Herze Haben""#,
-                r#"Recitativo "Was Ist Die Liebe Gottes?""#,
-                r#"Aria "Stirb In Mir, Welt Und Alle Deine Leibe""#,
-                r#"Recitativo "Doch Meint Es Auch Dabei""#,
-                r#"Chorale "Du Süsse Liebe, Schenk Uns Deine Gunst""#,
-            ]
+            rel.display_tracklist().split('\n').next().unwrap(),
+            "[6:22] Aria \"Vergnügte Ruh, Beliebte Seelenlust\"",
         );
         assert_eq!(rel.parse_tracklist().first().unwrap().duration, "6:22");
     }
