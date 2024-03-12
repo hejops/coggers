@@ -1,10 +1,12 @@
+use std::fmt::Display;
+
 use serde::Deserialize;
 use serde::Serialize;
 
 use crate::http;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
-pub enum TrackType {
+enum TrackType {
     #[serde(rename = "index")]
     Index,
     #[serde(rename = "track")]
@@ -16,8 +18,9 @@ pub enum TrackType {
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct Track {
     pub title: String,
+    /// May be an empty string (not None)
     pub duration: String,
-    pub type_: TrackType,
+    type_: TrackType,
     pub sub_tracks: Option<Vec<Track>>,
 }
 
@@ -89,6 +92,7 @@ pub struct Release {
 }
 
 impl Release {
+    /// Returns None if release is not found.
     pub fn get(release_id: usize) -> Option<Self> {
         let resp = http::make_request(http::RequestType::Release, &release_id.to_string()).ok()?;
 
@@ -98,8 +102,9 @@ impl Release {
         }
     }
 
+    /// Extract Discogs tracklist (which may be nested) as a flat list.
     pub fn parse_tracklist(&self) -> Vec<&Track> {
-        pub fn recurse(tracks: &[Track]) -> Vec<&Track> {
+        fn recurse(tracks: &[Track]) -> Vec<&Track> {
             let mut out = vec![];
             for track in tracks.iter() {
                 match &track.sub_tracks {
@@ -115,6 +120,45 @@ impl Release {
         }
         recurse(&self.tracklist)
     }
+
+    /// Precedence: track credits > album credits > artists_sort.
+    ///
+    /// This is strictly for classical releases; outside classical music, it is
+    /// usually more meaningful to use artists_sort.
+    ///
+    /// The length of the returned Vec will either be 1 or equal to the length
+    /// of the parsed tracklist.
+    pub fn get_composers(&self) -> Option<Vec<&str>> {
+        if !self.genres.iter().any(|g| g == "Classical") {
+            return None;
+        }
+
+        // TODO: track credits
+
+        let extra: Vec<&str> = self
+            .extraartists
+            .iter()
+            .filter(|a| a.role.starts_with("Compose"))
+            .map(|a| a.name.as_str())
+            .collect();
+        Some(match extra.len() {
+            1 => extra,
+            _ => vec![&self.artists_sort],
+        })
+    }
+}
+
+impl Display for Release {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        write!(
+            f,
+            "{} ({}), by {}",
+            self.title, self.year, self.artists_sort
+        )
+    }
 }
 
 #[cfg(test)]
@@ -123,7 +167,7 @@ mod tests {
     use crate::release::Release;
 
     #[test]
-    fn test_release() {
+    fn test_release_metadata() {
         // https://www.discogs.com/release/8196883
         let rel = Release::get(8196883).unwrap();
         assert_eq!(rel.year, 1998);
@@ -131,9 +175,13 @@ mod tests {
         assert_eq!(rel.id, 8196883);
         assert_eq!(rel.genres, vec!["Classical"]);
         assert_eq!(rel.artists[0].name, "Monica Groop");
+        assert_eq!(rel.get_composers().unwrap(), vec!["Johann Sebastian Bach"]);
+    }
 
+    #[test]
+    fn test_release_tracklist() {
+        let rel = Release::get(8196883).unwrap();
         assert_eq!(rel.parse_tracklist().len(), 19);
-
         assert_eq!(
             rel.parse_tracklist()
                 .iter()
@@ -161,6 +209,24 @@ mod tests {
                 r#"Chorale "Du Süsse Liebe, Schenk Uns Deine Gunst""#,
             ]
         );
+        assert_eq!(rel.parse_tracklist().first().unwrap().duration, "6:22");
+    }
+
+    #[test]
+    fn test_display() {
+        // https://www.discogs.com/release/2922014
+        let rel = Release::get(2922014).unwrap();
+        assert_eq!(
+            rel.to_string(),
+            "Mating Call (1957), by Tadd Dameron With John Coltrane"
+        );
+    }
+
+    #[test]
+    fn test_no_durations() {
+        // https://www.discogs.com/release/2922014
+        let rel = Release::get(2922014).unwrap();
+        assert_eq!(rel.parse_tracklist().first().unwrap().duration, "");
     }
 
     #[test]
