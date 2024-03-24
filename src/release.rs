@@ -91,7 +91,11 @@ pub struct Release {
     num_for_sale: usize,
 }
 
+use crate::search::SearchRelease;
+use crate::search::SearchResults;
+
 impl Release {
+    /// Used when the release ID is known; otherwise, use Release::search.
     /// Returns None if release is not found.
     pub fn get(release_id: usize) -> Option<Self> {
         let resp = http::make_request(http::RequestType::Release, &release_id.to_string()).ok()?;
@@ -100,6 +104,23 @@ impl Release {
             reqwest::StatusCode::OK => serde_json::from_str(resp.text().unwrap().as_str()).unwrap(),
             _ => None,
         }
+    }
+
+    /// 50 per page. Returns None if no search results. Filtering is not handled
+    /// here.
+    pub fn search(
+        artist: &str,
+        album: &str,
+    ) -> Option<Vec<SearchRelease>> {
+        // None is used over empty Vec as it better signals intent
+        let resp = http::make_request(
+            http::RequestType::Search,
+            &format!("/database/search?release_title={album}&artist={artist}&type=release"),
+        )
+        .unwrap();
+        let results: SearchResults = serde_json::from_str(resp.text().unwrap().as_str()).unwrap();
+        // cast empty vec into None -- https://stackoverflow.com/a/65012849
+        (!results.results.is_empty()).then_some(results.results)
     }
 
     /// Extract Discogs tracklist (which may be nested) as a flat list.

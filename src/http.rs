@@ -64,7 +64,7 @@ pub enum RequestType {
     Search,
 }
 
-/// Most request types do not require the username, except collection. The
+/// Most request types do not require the username, but collection does. The
 /// request type is specified as we do not expose Credentials.
 pub fn make_request(
     request_type: RequestType,

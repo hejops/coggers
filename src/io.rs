@@ -1,9 +1,9 @@
 use std::env;
-use std::fs::remove_file;
+use std::fs;
 use std::path::Path;
 
 use anyhow::anyhow;
-use lazy_static::lazy_static; // see also: https://github.com/matklad/once_cell
+use lazy_static::lazy_static; /* see also: https://github.com/matklad/once_cell, https://blog.logrocket.com/rust-lazy-static-pattern/#differences-between-lazy-static-oncecell-lazylock */
 use rusqlite::Connection;
 use rusqlite::Result;
 use walkdir::DirEntry;
@@ -64,12 +64,17 @@ impl AlbumDir {
     }
 }
 
+/// Music files stored on disk.
+///
+/// The directory structure is strictly adhered to:
+///     `<db_path>/<artist>/<album> (<year>)`
 pub struct Database {
     db_path: String,
     pub entries: Vec<AlbumDir>,
 }
 
 impl Database {
+    /// Load from static sqlite db.
     pub fn load(db_path: &str) -> Result<Self> {
         let conn = Connection::open(db_path)?;
         let mut stmt = conn.prepare("select * from albums;")?;
@@ -95,7 +100,7 @@ impl Database {
     /// 2 min / 4 TB / 59 k albums (warm)
     pub fn dump(&self) -> rusqlite::Result<()> {
         if Path::new(&self.db_path).exists() {
-            remove_file(&self.db_path).unwrap();
+            fs::remove_file(&self.db_path).unwrap();
         };
         let conn = Connection::open(&self.db_path)?;
 
@@ -138,6 +143,6 @@ mod tests {
         let db = Database::load("test.db").unwrap();
         let first = db.entries.first();
         assert!(first.is_some());
-        assert_eq!(db.entries.len(), 1);
+        assert!(db.entries.len() > 1);
     }
 }

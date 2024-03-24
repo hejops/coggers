@@ -26,7 +26,7 @@ pub struct SearchRelease {
     cover_image: String,
     format_quantity: usize,
     genre: Vec<String>,
-    id: usize,
+    pub id: usize,
     label: Vec<String>,
     master_id: usize,
     master_url: Option<String>,
@@ -54,35 +54,24 @@ pub struct SearchResults {
     pub results: Vec<SearchRelease>,
 }
 
-/// 50 per page. Returns None if no search results.
-pub fn search_release(
-    artist: &str,
-    album: &str,
-) -> Option<Vec<SearchRelease>> {
-    let resp = http::make_request(
-        http::RequestType::Search,
-        &format!("/database/search?release_title={album}&artist={artist}&type=release"),
-    )
-    .unwrap();
-    let results: SearchResults = serde_json::from_str(resp.text().unwrap().as_str()).unwrap();
-    // cast empty vec into None -- https://stackoverflow.com/a/65012849
-    (!results.results.is_empty()).then_some(results.results)
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::search::search_release;
+    use crate::release::Release;
     #[test]
     fn test_big_search() {
         let album = "ride the lightning";
         let artist = "metallica";
-        assert_eq!(search_release(artist, album).unwrap().len(), 50);
+        assert_eq!(Release::search(artist, album).unwrap().len(), 50);
+        assert_eq!(
+            Release::search(artist, album).unwrap().first().unwrap().id,
+            1722463
+        );
     }
 
     #[test]
     fn test_empty_search() {
         let album = "djsakldjsakl";
         let artist = "metallica";
-        assert_eq!(search_release(artist, album), None);
+        assert_eq!(Release::search(artist, album), None);
     }
 }
