@@ -17,13 +17,20 @@ use crate::release::Release;
 // https://github.com/ratatui-org/ratatui/tree/main?tab=readme-ov-file#example
 
 fn handle_events() -> io::Result<bool> {
-    if event::poll(std::time::Duration::from_millis(50))? {
-        if let Event::Key(key) = event::read()? {
-            if key.kind == event::KeyEventKind::Press && key.code == KeyCode::Char('q') {
-                return Ok(true);
-            }
+    if !event::poll(std::time::Duration::from_millis(50))? {
+        return Ok(false);
+    };
+    if let Event::Key(key) = event::read()? {
+        if key.kind != event::KeyEventKind::Press {
+            return Ok(false);
+        }
+        match key.code {
+            KeyCode::Char('q') => return Ok(true),
+            KeyCode::Char('x') => return Ok(true),
+            _ => (),
         }
     }
+
     Ok(false)
 }
 
