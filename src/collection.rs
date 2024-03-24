@@ -1,6 +1,5 @@
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Result;
 
 use crate::http;
 use crate::release::Artist;
@@ -45,11 +44,11 @@ pub struct CollectionResults {
 }
 
 impl CollectionResults {
-    pub fn dump_collection() -> Result<Self> {
+    pub fn dump_collection() -> anyhow::Result<Self> {
         let i = 1;
         let url = format!("/collection/folders/0/releases?per_page=250&page={i}");
-        let resp = http::make_request(http::RequestType::Collection, &url).unwrap();
-        serde_json::from_str(resp.text().unwrap().as_str())
+        let resp = http::make_request(http::RequestType::Collection, &url)?;
+        Ok(serde_json::from_str(resp.text()?.as_str())?)
     }
 }
 
