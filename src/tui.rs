@@ -42,7 +42,7 @@ impl Release {
 
         let mut should_quit = false;
 
-        // any data fetched within this loop must be cached
+        // any data fetched within this loop must be cached -- time to use HashMap
         while !should_quit {
             terminal.draw(|frame| Self::ui(frame, self))?;
             should_quit = handle_events()?;
@@ -57,13 +57,17 @@ impl Release {
         frame: &mut Frame,
         rel: &Self,
     ) {
-        frame.render_widget(
-            Paragraph::new(rel.display_tracklist()).block(
-                Block::default()
-                    .title(rel.to_string())
-                    .borders(Borders::TOP),
-            ),
-            frame.size(),
-        );
+        // para surrounded by block
+        // https://docs.rs/ratatui/0.26.1/ratatui/widgets/trait.Widget.html
+        // let para = Paragraph::new(rel.display_tracklist());
+
+        let items = rel.parse_tracklist().into_iter().map(|t| t.to_string());
+        let list = List::new(items);
+
+        let block = Block::default()
+            .title(rel.to_string())
+            .borders(Borders::TOP);
+
+        frame.render_widget(list.block(block), frame.size());
     }
 }

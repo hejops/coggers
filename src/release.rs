@@ -1,9 +1,7 @@
-use core::panic;
 use std::fmt::Display;
 
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
 
 // use crate::search::SearchRelease;
 use crate::http;
@@ -27,6 +25,19 @@ pub struct Track {
     pub duration: String,
     type_: TrackType,
     pub sub_tracks: Option<Vec<Track>>,
+}
+
+impl Display for Track {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        if !self.duration.is_empty() {
+            write!(f, "[{}] ", self.duration)?;
+        }
+        writeln!(f, "{}", self.title)?;
+        Ok(())
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -197,17 +208,6 @@ impl Release {
         recurse(&self.tracklist)
     }
 
-    pub fn display_tracklist(&self) -> String {
-        let mut tl = String::new();
-        for track in self.parse_tracklist() {
-            if !track.duration.is_empty() {
-                tl.push_str(&format!("[{}] ", track.duration));
-            }
-            tl.push_str(&format!("{}\n", track.title));
-        }
-        tl.trim_end().to_string()
-    }
-
     /// Precedence: track credits > album credits > artists_sort.
     ///
     /// This is strictly for classical releases; outside classical music, it is
@@ -235,6 +235,8 @@ impl Release {
     }
 }
 
+// TODO: group Display impls in display.rs?
+/// Tracklist will not be included; use display_tracklist instead
 impl Display for Release {
     fn fmt(
         &self,
