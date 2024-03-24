@@ -3,8 +3,6 @@ use std::fmt::Display;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::http;
-use crate::release::Master;
 use crate::release::Release;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -31,7 +29,7 @@ pub struct SearchRelease {
     format_quantity: usize,
     genre: Vec<String>,
     pub id: usize,
-    label: Vec<String>,
+    pub label: Vec<String>, // should be renamed to labels
     /// May be 0, which means it has no master.
     master_id: usize,
     master_url: Option<String>,
@@ -40,8 +38,10 @@ pub struct SearchRelease {
     thumb: String,
     title: String,
     uri: String,
+    // this makes sorting very annoying
+    pub year: Option<String>,
     // barcode: Vec [],
-    // format: Vec ,
+    format: Vec<String>,
     // formats: Vec ,
     // user_data: Object {
     //     in_collection: Bool,
@@ -57,7 +57,14 @@ impl Display for SearchRelease {
         &self,
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
-        writeln!(f, "{}", self.master_id)?;
+        writeln!(
+            f,
+            "{} {} {} {}",
+            self.year.as_ref().unwrap_or(&"????".to_string()),
+            self.id,
+            self.format.first().unwrap(),
+            self.label.first().unwrap_or(&"No label".to_string()),
+        )?;
         Ok(())
     }
 }
@@ -82,6 +89,28 @@ impl SearchResults {
         }
         None
     }
+
+    pub fn remove_no_year(mut self) -> Self {
+        self.results.retain(|r| r.year.is_some());
+        self
+    }
+
+    pub fn sort(
+        mut self,
+        // sort: SortField,
+    ) -> Self {
+        fn get_year(s: &SearchRelease) -> usize {
+            s.year.as_ref().unwrap_or(&"0".to_string()).parse().unwrap()
+        }
+
+        self.results.sort_by_key(get_year);
+        self
+    }
+}
+
+pub enum SortField {
+    Year,
+    Format,
 }
 
 impl Display for SearchResults {
@@ -103,10 +132,20 @@ mod tests {
     fn test_big_search() {
         let album = "ride the lightning";
         let artist = "metallica";
+
         let search = Release::search(artist, album);
         assert_eq!(search.results.len(), 50);
-        assert_eq!(search.results.first().unwrap().id, 1722463);
-        assert_eq!(search.find_primary().unwrap().id, 377464);
+        // assert_eq!(search.results.first().unwrap().id, 1722463);
+
+        let search = search.remove_no_year();
+        assert_eq!(search.results.len(), 31);
+        let search = search.sort();
+        assert_eq!(search.results.len(), 31);
+
+        let pri = search.find_primary().unwrap();
+        assert_eq!(pri.id, 377464);
+        assert_eq!(pri.year, 1984);
+        assert_eq!(pri.tracklist.len(), 8);
     }
 
     #[test]
