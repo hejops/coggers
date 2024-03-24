@@ -1,12 +1,17 @@
+use core::panic;
 use std::fmt::Display;
 
 use serde::Deserialize;
 use serde::Serialize;
+use serde_json::Value;
 
+// use crate::search::SearchRelease;
 use crate::http;
+use crate::search::SearchResults;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 enum TrackType {
+    // TODO: rename_all
     #[serde(rename = "index")]
     Index,
     #[serde(rename = "track")]
@@ -43,9 +48,44 @@ pub struct Artist {
     pub tracks: String, // this being a String is very problematic
 }
 
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+pub struct Master {
+    /// AKA primary
+    pub main_release: usize,
+    main_release_url: String,
+
+    most_recent_release: usize,
+    most_recent_release_url: String,
+
+    pub id: usize, // u32 is probably fine
+    pub year: u16,
+
+    pub data_quality: String, // TODO: enum
+    /// API endpoint, in the form api.discogs.com/...
+    pub resource_url: String,
+    /// URL in the form https://www.discogs.com/release/123-title
+    pub uri: String,
+
+    /// Genres are distinct from styles.
+    pub genres: Vec<String>,
+    pub notes: String,
+    pub title: String,
+
+    pub artists: Vec<Artist>,
+    /// Should correspond to the tracklist of the primary release (need to find
+    /// counterexamples)
+    pub tracklist: Vec<Track>,
+
+    lowest_price: f32,
+    num_for_sale: usize,
+}
+
 /// The definitive representation of a release, and the only one with tracklist.
 /// Similar to CollectionRelease and SearchRelease, both of which contain less
 /// information.
+///
+/// Discogs does not provide a way to tell whether a release is primary; only
+/// master releases have this information.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct Release {
     // Explicitly defining multiple structs allows us to know all available fields at compile time,
@@ -54,6 +94,7 @@ pub struct Release {
     // struct with all fields, but leave some as Option<T>s.
     /// https://support.discogs.com/hc/en-us/articles/4402686008589-Why-Are-Some-Items-Blocked-In-The-Discogs-Marketplace
     pub blocked_from_sale: bool,
+
     /// Unique identifier of a Release.
     pub id: usize, // u32 is probably fine
     /// The earliest possible year is somewhere in the 1920s.
@@ -91,14 +132,26 @@ pub struct Release {
     num_for_sale: usize,
 }
 
-use crate::search::SearchRelease;
-use crate::search::SearchResults;
-
 impl Release {
     /// Used when the release ID is known; otherwise, use Release::search.
+    /// Note: passing a master ID will produce incorrect release! Use
+    /// Release::get_master instead.
+    ///
     /// Returns None if release is not found.
     pub fn get(release_id: usize) -> Option<Self> {
         let resp = http::make_request(http::RequestType::Release, &release_id.to_string()).ok()?;
+
+        match resp.status() {
+            reqwest::StatusCode::OK => serde_json::from_str(resp.text().unwrap().as_str()).unwrap(),
+            _ => None,
+        }
+    }
+
+    // this should probably be Master::get?
+    // having a bunch of get functions is becoming annoying, maybe time to make a
+    // trait Get?
+    pub fn get_master(master_id: usize) -> Option<Master> {
+        let resp = http::make_request(http::RequestType::Master, &master_id.to_string()).ok()?;
 
         match resp.status() {
             reqwest::StatusCode::OK => serde_json::from_str(resp.text().unwrap().as_str()).unwrap(),
@@ -111,7 +164,8 @@ impl Release {
     pub fn search(
         artist: &str,
         album: &str,
-    ) -> Option<Vec<SearchRelease>> {
+        // ) -> Option<Vec<SearchRelease>> {
+    ) -> SearchResults {
         // None is used over empty Vec as it better signals intent
         let resp = http::make_request(
             http::RequestType::Search,
@@ -119,8 +173,9 @@ impl Release {
         )
         .unwrap();
         let results: SearchResults = serde_json::from_str(resp.text().unwrap().as_str()).unwrap();
+        results
         // cast empty vec into None -- https://stackoverflow.com/a/65012849
-        (!results.results.is_empty()).then_some(results.results)
+        // (!results.results.is_empty()).then_some(results.results)
     }
 
     /// Extract Discogs tracklist (which may be nested) as a flat list.
