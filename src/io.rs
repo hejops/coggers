@@ -22,7 +22,7 @@ use walkdir::WalkDir;
 
 lazy_static! {
     // TODO: load from config file ~/.config/coggers/config
-    static ref LIBRARY_ROOT: String = env::var("MU").expect("Environment variable $MU must be set");
+    pub static ref LIBRARY_ROOT: String = env::var("MU").expect("Environment variable $MU must be set");
     pub static ref SOURCE: String = env::var("SOURCE").expect("Environment variable $SOURCE must be set");
 }
 
@@ -36,15 +36,32 @@ pub trait Walk {
 pub struct Library {
     root: String,
     dirs: Vec<DirEntry>,
+    // dirs: dyn Iterator<Item = DirEntry>,
 }
 
 impl Library {
+    /// Initialise a possibly empty `Library`; the directories are NOT collected
+    /// automatically, primarily for testing purposes. This makes it rather
+    /// awkward for callers:
+    ///
+    /// ```rust
+    /// use discogs::io::Library;
+    /// use discogs::io::Walk;
+    /// use discogs::io::LIBRARY_ROOT;
+    ///
+    /// let lib = Library::new(&LIBRARY_ROOT);
+    /// let dirs = lib.walk(); // as Iterator
+    ///
+    /// // let lib = Library::new(&LIBRARY_ROOT).collect(); // as Vec, slow
+    /// ```
     pub fn new(root: &str) -> Self {
         let root = root.to_string();
         let dirs = vec![];
-        let mut lib = Self { root, dirs };
-        lib.dirs = lib.walk().collect();
-        lib
+        Self { root, dirs }
+    }
+    pub fn collect(mut self) -> Self {
+        self.dirs = self.walk().collect();
+        self
     }
 }
 
@@ -150,6 +167,7 @@ impl Database {
         )?;
 
         for a in Library::new(&LIBRARY_ROOT)
+            .collect()
             .dirs
             .into_iter()
             .map(LibraryEntry::from_path)
@@ -172,12 +190,12 @@ mod tests {
     use crate::io::Database;
     use crate::io::Library;
     use crate::io::LibraryEntry;
+    use crate::io::Walk;
     use crate::io::LIBRARY_ROOT;
 
     #[test]
     fn test_album_dir() {
-        let lib = Library::new(&LIBRARY_ROOT);
-        let first_dir = lib.dirs.first().unwrap();
+        let first_dir = Library::new(&LIBRARY_ROOT).walk().next().unwrap();
         assert!(LibraryEntry::from_path(first_dir.clone()).is_ok());
     }
 
