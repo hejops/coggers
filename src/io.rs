@@ -1,3 +1,8 @@
+//! File operations, chiefly:
+//!
+//! 1. Directories in the library (<> SQL)
+//! 2. Directories to be tagged (-> ID3, etc)
+
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -16,28 +21,58 @@ use walkdir::WalkDir;
 //   Time (mean ± σ):      1.631 s ±  0.219 s
 
 lazy_static! {
-    // TODO: load from config file
+    // TODO: load from config file ~/.config/coggers/config
     static ref LIBRARY_ROOT: String = env::var("MU").expect("Environment variable $MU must be set");
+    pub static ref SOURCE: String = env::var("SOURCE").expect("Environment variable $SOURCE must be set");
 }
 
-pub fn walk() -> impl Iterator<Item = DirEntry> {
-    WalkDir::new(LIBRARY_ROOT.as_str())
-        .min_depth(2)
-        .max_depth(2)
-        .into_iter()
-        .filter_entry(|e| e.file_type().is_dir())
-        .filter_map(|e| e.ok())
-    // returning a Filter[Map] at compile time is relatively easy, returning a
-    // Map is not -- https://stackoverflow.com/a/27497032
+pub trait Walk {
+    /// We return `Iterator` and defer collection to callers.
+    fn walk(&self) -> impl Iterator<Item = DirEntry>;
+    // fn walk(root: &str) -> impl Iterator<Item = DirEntry>;
+    // fn walk(root: impl AsRef<Path>) -> impl Iterator<Item = DirEntry>;
+}
+
+pub struct Library {
+    root: String,
+    dirs: Vec<DirEntry>,
+}
+
+impl Library {
+    pub fn new(root: &str) -> Self {
+        let root = root.to_string();
+        let dirs = vec![];
+        let mut lib = Self { root, dirs };
+        lib.dirs = lib.walk().collect();
+        lib
+    }
+}
+
+impl Walk for Library {
+    /// Directories only, of the form `<root>/<artist>/<album>`. We are largely
+    /// unconcerned with the files contained within, as they are meant to be
+    /// played.
+    fn walk(&self) -> impl Iterator<Item = DirEntry> {
+        // fn walk(root: &str) -> impl Iterator<Item = DirEntry> {
+        WalkDir::new(&self.root)
+            .min_depth(2)
+            .max_depth(2)
+            .into_iter()
+            .filter_entry(|e| e.file_type().is_dir())
+            .filter_map(|e| e.ok())
+        // returning a Filter[Map] at compile time is relatively easy, returning
+        // a Map is not -- https://stackoverflow.com/a/27497032
+    }
 }
 
 #[derive(Debug, PartialEq)]
-pub struct AlbumDir {
+/// Data structure shared between Library and Database
+pub struct LibraryEntry {
     pub artist: String,
     pub album: String,
     pub year: usize,
 }
-impl AlbumDir {
+impl LibraryEntry {
     /// Parse path in the form 'artist/album (year)'
     pub fn from_path(path: DirEntry) -> anyhow::Result<Self> {
         let path = path.path().strip_prefix(LIBRARY_ROOT.as_str())?;
@@ -64,13 +99,14 @@ impl AlbumDir {
     }
 }
 
-/// Music files stored on disk.
+/// SQL representation of Library (potentially very confusing, so maybe should
+/// be merged into Library?)
 ///
 /// The directory structure is strictly adhered to:
 ///     `<db_path>/<artist>/<album> (<year>)`
 pub struct Database {
     db_path: String,
-    pub entries: Vec<AlbumDir>,
+    pub entries: Vec<LibraryEntry>,
 }
 
 impl Database {
@@ -78,9 +114,9 @@ impl Database {
     pub fn load(db_path: &str) -> Result<Self> {
         let conn = Connection::open(db_path)?;
         let mut stmt = conn.prepare("select * from albums;")?;
-        let entries: Vec<AlbumDir> = stmt
+        let entries: Vec<LibraryEntry> = stmt
             .query_map([], |row| {
-                Ok(AlbumDir {
+                Ok(LibraryEntry {
                     artist: row.get(0)?,
                     album: row.get(1)?,
                     year: row.get(2)?,
@@ -113,7 +149,11 @@ impl Database {
             [],
         )?;
 
-        for a in walk().map(AlbumDir::from_path).filter_map(|a| a.ok())
+        for a in Library::new(&LIBRARY_ROOT)
+            .dirs
+            .into_iter()
+            .map(LibraryEntry::from_path)
+            .filter_map(|a| a.ok())
         // note to self: trying to be lazy all the way means the side effects do not get executed!
         // .map(|a| { conn.execute(...) } )
         {
@@ -129,13 +169,16 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
-    use crate::io::walk;
-    use crate::io::AlbumDir;
     use crate::io::Database;
+    use crate::io::Library;
+    use crate::io::LibraryEntry;
+    use crate::io::LIBRARY_ROOT;
 
     #[test]
     fn test_album_dir() {
-        assert!(AlbumDir::from_path(walk().next().unwrap()).is_ok());
+        let lib = Library::new(&LIBRARY_ROOT);
+        let first_dir = lib.dirs.first().unwrap();
+        assert!(LibraryEntry::from_path(first_dir.clone()).is_ok());
     }
 
     #[test]
