@@ -186,13 +186,16 @@ impl Menu for DirMenu {
                 KeyCode::Char('q') => return Ok(true),
                 KeyCode::Char('x') => return Ok(true),
                 KeyCode::Char('j') => {
-                    // TODO: overflow = panic
-                    *self.state.offset_mut() += 1;
-                    return Ok(false);
+                    if self.state.offset() < self.dirs.len() {
+                        *self.state.offset_mut() += 1;
+                    }
+                    return noquit;
                 }
                 KeyCode::Char('k') => {
-                    *self.state.offset_mut() -= 1;
-                    return Ok(false);
+                    if self.state.offset() > 0 {
+                        *self.state.offset_mut() -= 1;
+                    }
+                    return noquit;
                 }
                 _ => (),
             }
