@@ -14,6 +14,8 @@ use rusqlite::Result;
 use walkdir::DirEntry;
 use walkdir::WalkDir;
 
+use crate::transcode::File;
+
 // hyperfine 'find $MU >/dev/null'
 //   Time (mean ± σ):      1.123 s ±  0.003 s
 
@@ -33,6 +35,37 @@ pub trait Walk {
     // fn walk(root: impl AsRef<Path>) -> impl Iterator<Item = DirEntry>;
 }
 
+// do errors need to be handled?
+fn dir_to_str(dir: &DirEntry) -> &str { dir.path().to_str().unwrap() }
+
+/// Walk 1 level, collect files, return as sorted vec
+pub fn get_sorted_files(dir: &DirEntry) -> Vec<DirEntry> {
+    let mut files: Vec<DirEntry> = WalkDir::new(dir_to_str(dir))
+        .into_iter()
+        // TODO: depth 1
+        // .filter_entry is more strict than filter, as iteration is stopped as soon as the
+        // first predicate is false; in this case, the first item is the dir itself,
+        // which returns false!
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .collect();
+
+    files.sort_by(|a, b| dir_to_str(a).cmp(dir_to_str(b)));
+    files
+}
+
+impl File {
+    pub fn new(dir: &DirEntry) -> anyhow::Result<Self> {
+        let path = dir_to_str(dir);
+        let tag = id3::Tag::read_from_path(path)?;
+        Ok(Self {
+            path: path.to_string(),
+            tags: tag,
+        })
+    }
+}
+
+/// `Library` contains directories...
 pub struct Library {
     root: String,
     dirs: Vec<DirEntry>,
