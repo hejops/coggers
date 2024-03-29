@@ -55,8 +55,9 @@ pub fn get_sorted_files(dir: &DirEntry) -> Vec<DirEntry> {
 }
 
 impl File {
-    pub fn new(dir: &DirEntry) -> anyhow::Result<Self> {
-        let path = dir_to_str(dir);
+    pub fn new(f: &DirEntry) -> anyhow::Result<Self> {
+        assert!(f.file_type().is_file());
+        let path = dir_to_str(f);
         let tag = id3::Tag::read_from_path(path)?;
         Ok(Self {
             path: path.to_string(),
