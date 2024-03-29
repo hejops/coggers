@@ -1,9 +1,9 @@
 use std::fmt::Display;
 
+use anyhow::Result;
 use serde::Deserialize;
 use serde::Serialize;
 
-// use crate::search::SearchRelease;
 use crate::http;
 use crate::search::SearchResults;
 
@@ -32,10 +32,11 @@ impl Display for Track {
         &self,
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
+        // no newlines should be inserted here
         if !self.duration.is_empty() {
             write!(f, "[{}] ", self.duration)?;
         }
-        writeln!(f, "{}", self.title)?;
+        write!(f, "{}", self.title)?;
         Ok(())
     }
 }
@@ -132,7 +133,10 @@ pub struct Release {
     pub artists: Vec<Artist>,
     pub extraartists: Vec<Artist>,
     pub labels: Vec<Label>,
-    pub tracklist: Vec<Track>,
+    /// Raw representation of tracklist. This field is private, as its use is
+    /// discouraged; `Release.tracklist()`, which better handles potential
+    /// nesting, should be used instead.
+    tracklist: Vec<Track>,
 
     // companies: Vec,
     // formats: Vec,
@@ -189,8 +193,23 @@ impl Release {
         // (!results.results.is_empty()).then_some(results.results)
     }
 
+    pub fn durations(&self) -> Vec<u32> {
+        fn as_int(dur: &str) -> Result<u32> {
+            let mut int: u32 = 0;
+            for (i, part) in dur.split(':').rev().enumerate() {
+                int += part.parse::<u32>()? * 60_u32.pow(i.try_into()?);
+            }
+            Ok(int)
+        }
+        self.tracklist()
+            .iter()
+            .map(|t| t.duration.as_ref())
+            .map(|dur| as_int(dur).unwrap_or(0))
+            .collect()
+    }
+
     /// Extract Discogs tracklist (which may be nested) as a flat list.
-    pub fn parse_tracklist(&self) -> Vec<&Track> {
+    pub fn tracklist(&self) -> Vec<&Track> {
         fn recurse(tracks: &[Track]) -> Vec<&Track> {
             let mut out = vec![];
             for track in tracks.iter() {
@@ -270,12 +289,12 @@ mod tests {
     #[test]
     fn test_release_tracklist() {
         let rel = Release::get(8196883).unwrap();
-        assert_eq!(rel.parse_tracklist().len(), 19);
+        assert_eq!(rel.tracklist().len(), 19);
         assert_eq!(
-            rel.display_tracklist().split('\n').next().unwrap(),
+            rel.tracklist().first().unwrap().to_string(),
             "[6:22] Aria \"Vergnügte Ruh, Beliebte Seelenlust\"",
         );
-        assert_eq!(rel.parse_tracklist().first().unwrap().duration, "6:22");
+        assert_eq!(rel.tracklist().first().unwrap().duration, "6:22");
     }
 
     #[test]
@@ -292,7 +311,7 @@ mod tests {
     fn test_no_durations() {
         // https://www.discogs.com/release/2922014
         let rel = Release::get(2922014).unwrap();
-        assert_eq!(rel.parse_tracklist().first().unwrap().duration, "");
+        assert_eq!(rel.tracklist().first().unwrap().duration, "");
     }
 
     #[test]
