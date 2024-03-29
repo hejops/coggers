@@ -16,8 +16,10 @@ use crossterm::ExecutableCommand;
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 use walkdir::DirEntry;
+use walkdir::WalkDir;
 
 use crate::io::Sort;
+use crate::io::Walk;
 
 pub struct TaggerApp {
     state: ListState,
@@ -38,8 +40,10 @@ impl TaggerApp {
     pub fn main(&mut self) -> io::Result<()> {
         enable_raw_mode()?;
         stdout().execute(EnterAlternateScreen)?;
+
         let terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
         self.run(terminal)?;
+
         disable_raw_mode()?;
         stdout().execute(LeaveAlternateScreen)?;
         Ok(())
@@ -119,19 +123,54 @@ impl Widget for &mut TaggerApp {
     ) where
         Self: Sized,
     {
-        self.render_items(area, buf);
+        let vertical = Layout::vertical([
+            Constraint::Length(6),
+            Constraint::Length(1),
+            Constraint::Min(0),
+        ]);
+        let [dirs, spacer, files] = vertical.areas(area);
+
+        self.render_dirs(dirs, buf);
+        self.render_files(files, buf);
+    }
+}
+
+impl Walk for &String {
+    fn walk(&self) -> impl Iterator<Item = DirEntry> {
+        // 1;
+        WalkDir::new(self).into_iter().filter_map(|f| f.ok())
     }
 }
 
 impl TaggerApp {
-    pub fn render_items(
+    pub fn render_dirs(
         &mut self,
         area: Rect,
         buf: &mut Buffer,
     ) {
         // note: highlight only becomes visible when an item is selected
-        // TODO: don't clone
+        // TODO: don't clone!
         let list = List::new(self.items.clone()).highlight_symbol("> ");
         StatefulWidget::render(list, area, buf, &mut self.state);
+    }
+    pub fn render_files(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+    ) {
+        match self.state.selected() {
+            None => (),
+            Some(idx) => {
+                let files: Vec<String> = self
+                    .items
+                    .get(idx)
+                    .unwrap()
+                    .walk()
+                    .map(|f| f.as_str().to_string())
+                    .collect();
+                let list = List::new(files);
+                Widget::render(list, area, buf);
+            }
+        }
     }
 }
