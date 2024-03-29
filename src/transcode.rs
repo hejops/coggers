@@ -1,9 +1,16 @@
 //! Transcoding and preservation of metadata across formats
 
+use std::fmt::Display;
+use std::iter::zip;
+
+use anyhow::Result;
+use id3::TagLike;
 use walkdir::DirEntry;
 use walkdir::WalkDir;
 
+use crate::io::get_sorted_files;
 use crate::io::Walk;
+use crate::release::Release;
 
 // transcoding
 // flac
@@ -18,14 +25,9 @@ use crate::io::Walk;
 // has v0, but is called Best (lol) https://github.com/DoumanAsh/mp3lame-encoder
 
 // metadata
-// mp3 (id3) https://github.com/polyfloyd/rust-id3
-// mp3/m4a/flac https://github.com/TianyiShi2001/audiotags
+// mp3/wav/aiff https://github.com/polyfloyd/rust-id3
+// mp3/m4a/flac https://github.com/TianyiShi2001/audiotags -- i don't like the typing (Box? Album?)
 // TODO: opus
-
-pub struct File {
-    path: String,
-    file_type: FileType,
-}
 
 ///
 pub enum FileType {
@@ -83,28 +85,154 @@ impl Walk for DirEntry {
     }
 }
 
-// i initially wanted to write a method dir.parse, but that violates the orphan
-// rule (https://doc.rust-lang.org/error_codes/E0210.html), so i just made a trait lol
-pub trait Parse {
-    fn parse(&self);
+/// Wrapper over `audiotags::Tag`
+pub struct File {
+    pub path: String,
+    // raw_tags: Box<dyn AudioTag + Send + Sync>, // audiotags
+    pub tags: id3::Tag,
 }
 
-impl Parse for DirEntry {
-    // TODO: figure out the appropriate scope for this fn; most likely, just need to
-    // return Vec<Tag>
-    fn parse(&self) {
-        let files: Vec<DirEntry> = WalkDir::new(self.path())
+/// Used in `Track` and `File`
+pub enum TagField {
+    Artist,
+    Album,
+    Year,
+    Title,
+}
+
+impl File {
+    fn get(
+        &self,
+        field: TagField,
+    ) -> Option<String> {
+        match field {
+            // i hate &str so much
+            TagField::Artist => self.tags.artist().map(|f| f.to_string()),
+            TagField::Album => self.tags.album().map(|f| f.to_string()),
+            TagField::Title => self.tags.title().map(|f| f.to_string()),
+            TagField::Year => self.tags.year().map(|f| f.to_string()),
+            // _ => None,
+        }
+        // .map(|f| f.to_string())
+    }
+
+    fn set(
+        &mut self,
+        field: TagField,
+        value: &str,
+    ) {
+        // set_X cannot fail, apparently
+        match field {
+            TagField::Title => self.tags.set_title(value),
+            TagField::Artist => self.tags.set_artist(value),
+            TagField::Album => self.tags.set_album(value),
+            TagField::Year => self.tags.set_year(value.parse().unwrap()),
+        }
+    }
+}
+
+impl Display for File {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        writeln!(f, "{}", self.path)?;
+        writeln!(f, "title: {}", self.tags.title().unwrap_or("none"))?;
+        writeln!(f, "artist: {}", self.tags.artist().unwrap_or("none"))?;
+        writeln!(f, "album: {}", self.tags.album().unwrap_or("none"))?;
+        writeln!(f, "year: {}", self.tags.year().unwrap_or(0))?;
+        Ok(())
+    }
+}
+
+pub struct SourceDir {
+    path: String,
+    pub tags: Vec<File>,
+}
+impl SourceDir {
+    pub fn new(path: &str) -> Result<Self> {
+        let dir = WalkDir::new(path)
             .into_iter()
-            // .filter_entry is more strict than filter, as iteration is stopped as soon as the
-            // first predicate is false; in this case, the first item is the dir itself,
-            // which returns false!
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
+            .next()
+            .expect("root dir returned")?;
+        let files = get_sorted_files(&dir)
+            .iter()
+            // .map(|path| File::new(dir_to_str(path)))
+            .map(File::new)
+            .filter_map(|p| p.ok())
             .collect();
-        let file = files.first().unwrap();
-        // let tags = audiotags::FlacTag::read_from_path(file.path());
-        let tags = audiotags::Tag::new().read_from_path(file.path()); // equivalent
-        println!("{:?}", file);
-        println!("{:#?}", tags.unwrap().album());
+        Ok(Self {
+            path: path.to_string(),
+            tags: files,
+        })
+    }
+}
+
+// should probably be used as the return type for matches_discogs (instead of
+// bool), so that we can decide how to handle parse errors
+pub enum ParseError {
+    /// Generally unrecoverable
+    UnequalLen,
+
+    /// Can usually be ignored
+    UnequalDur,
+    BadTags,
+}
+
+impl SourceDir {
+    /// Some quirks:
+    ///
+    /// - `TagLike::duration()` may return `Some(0)`, for some reason; not sure
+    ///   if `None` can be returned
+    /// - durations are returned in milliseconds, so we convert to seconds
+    pub fn durations(&self) -> Vec<Option<u32>> {
+        self.tags
+            .iter()
+            .map(|t| t.tags.duration()) //.unwrap_or(0))
+            .map(|d| d.map(|d| d / 1000)) // Option.map in Iterator.map is wild
+            .collect()
+    }
+
+    pub fn matches_discogs(
+        &self,
+        rel: &Release,
+    ) -> bool {
+        if self.tags.len() != rel.tracklist().len() {
+            return false;
+        }
+
+        let diffs = zip(self.durations(), rel.durations()).map(|(a, b)| a.unwrap_or(0).abs_diff(b));
+        if diffs.max() > Some(5) {
+            return false;
+        }
+
+        true
+    }
+
+    pub fn apply_discogs(
+        &mut self,
+        rel: &Release,
+    ) -> Result<()> {
+        for (discogs_track, file) in rel.tracklist().iter().zip(&mut self.tags) {
+            // println!("{}\n{}", discogs_track, file);
+
+            // println!("{}\n{:?}", discogs_track.title, file.get(TagField::Title));
+
+            // let dist = levenshtein(&discogs_track.title,
+            // &file.get(TagField::Title).unwrap()); println!("{}", dist);
+
+            // println!("{}\n{:?}", rel.title, file.get(TagField::Album));
+            // println!("{}\n{:?}", rel.artists_sort, file.get(TagField::Artist));
+            // println!("{}\n{:?}", rel.year, file.get(TagField::Year));
+
+            file.set(TagField::Title, &discogs_track.title);
+            file.set(TagField::Artist, &rel.artists_sort);
+            file.set(TagField::Album, &rel.title);
+            file.set(TagField::Year, &rel.year.to_string());
+            file.tags.write_to_path(&file.path, id3::Version::Id3v24)?;
+
+            //
+        }
+        Ok(())
     }
 }
