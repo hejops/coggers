@@ -5,6 +5,8 @@ use std::iter::zip;
 
 use anyhow::Result;
 use id3::TagLike;
+use lofty::AudioFile;
+use lofty::ParseOptions;
 use ratatui::widgets::ListItem;
 use walkdir::DirEntry;
 use walkdir::WalkDir;
@@ -30,7 +32,8 @@ use crate::release::Release;
 // mp3/m4a/flac https://github.com/TianyiShi2001/audiotags -- i don't like the typing (Box? Album?)
 // TODO: opus
 
-///
+/// Mainly for transcoding (symphonia?). For metadata, id3 is always used.
+#[derive(Debug)]
 pub enum FileType {
     // Lossy
     MP3,
@@ -40,6 +43,8 @@ pub enum FileType {
     WAV,
     /// Handled by claxon
     FLAC,
+
+    Unknown,
 }
 
 impl Walk for DirEntry {
@@ -61,20 +66,88 @@ impl Walk for DirEntry {
 }
 
 /// Wrapper over `id3::Tag`
+#[derive(Debug)]
 pub struct File {
     pub path: String,
+    pub file_type: FileType,
+    /// To avoid the need for an adapter over different tag containers (and
+    /// since I always transcode into MP3), id3 is used.
     pub tags: id3::Tag,
 }
 
 /// Used in `Track` and `File`
+#[derive(Debug)]
 pub enum TagField {
     Artist,
     Album,
     Year,
     Title,
+    TrackNumber,
 }
 
 impl File {
+    pub fn new(path: &str) -> anyhow::Result<Self> {
+        let ft = infer::get_from_path(path)
+            .expect("read file")
+            .expect("infer filetype")
+            .extension(); // disregards the actual filetype
+
+        let ft = match ft {
+            "mp3" => FileType::MP3,
+            "flac" => FileType::FLAC,
+            _ => FileType::Unknown,
+        };
+
+        // init with empty tags, so we can use File.get for convenience
+        let mut f = Self {
+            path: path.to_string(),
+            file_type: ft,
+            tags: id3::Tag::new(),
+        };
+
+        match id3::Tag::read_from_path(path) {
+            Ok(tags) => f.tags = tags,
+            Err(_) => {
+                // parse flac tags and cast them into id3; after conversion into mp3, they can
+                // be set
+
+                // metaflac: vorbis comments are stored internally as hashmap, but API doesn't
+                // let you get them in any way --
+                // https://jameshurst.github.io/rust-metaflac/metaflac/block/struct.VorbisComment.html
+
+                // // symphonia_metadata requires a MetadataBuilder (whatever that is)
+                // symphonia_metadata::flac::read_comment_block(reader, metadata);
+                // symphonia_metadata::id3v2::read_id3v2(reader, metadata);
+
+                // lofty is probably the cleanest way to do it
+
+                let mut buf = std::fs::File::open(path).unwrap();
+                let flacfile = lofty::flac::FlacFile::read_from(&mut buf, ParseOptions::default())?;
+                let comments = flacfile.vorbis_comments().unwrap();
+
+                println!("{:?}", comments);
+
+                for (tag, com) in [
+                    // 2nd value should be [&str], probably
+                    (TagField::Title, "TITLE"),
+                    (TagField::TrackNumber, "TRACKNUMBER"),
+                    (TagField::Artist, "ARTIST"),
+                    (TagField::Album, "ALBUM"),
+                    (TagField::Year, "DATE"),
+                ] {
+                    if let Some(val) = comments.get(com) {
+                        f.set(tag, val);
+                    }
+                }
+
+                println!("{:?}", f.tags);
+                // nothing to save yet
+            }
+        };
+
+        Ok(f)
+    }
+
     pub fn get(
         &self,
         field: TagField,
@@ -85,6 +158,7 @@ impl File {
             TagField::Album => self.tags.album().map(|f| f.to_string()),
             TagField::Title => self.tags.title().map(|f| f.to_string()),
             TagField::Year => self.tags.year().map(|f| f.to_string()),
+            TagField::TrackNumber => self.tags.track().map(|f| f.to_string()),
             // _ => None,
         }
         // .map(|f| f.to_string())
@@ -95,14 +169,17 @@ impl File {
         field: TagField,
         value: &str,
     ) {
-        // set_X cannot fail, apparently
+        // Tag.set_X cannot fail, apparently
         match field {
             TagField::Title => self.tags.set_title(value),
             TagField::Artist => self.tags.set_artist(value),
             TagField::Album => self.tags.set_album(value),
             TagField::Year => self.tags.set_year(value.parse().unwrap()),
+            TagField::TrackNumber => self.tags.set_track(value.parse().unwrap()),
         }
     }
+
+    pub fn transcode() {}
 }
 
 impl Display for File {
@@ -141,6 +218,7 @@ impl SourceDir {
         self.dir
             .sort(true)
             .iter()
+            .map(|f| f.as_str())
             .map(File::new)
             .filter_map(|p| p.ok())
             .collect()
