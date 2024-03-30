@@ -150,7 +150,7 @@ impl Widget for &mut TaggerApp {
         let hsplit = Layout::vertical([
             Constraint::Length(6),
             Constraint::Length(1),
-            Constraint::Length(6),
+            Constraint::Length(7),
             Constraint::Length(1),
             Constraint::Min(0),
         ]);
@@ -199,7 +199,8 @@ impl TaggerApp {
         let f = File::new(f.as_str())?;
 
         let summary = f.to_string();
-        let list = List::new(summary.split('\n'));
+        let list = List::new(summary.split('\n'))
+            .block(Block::default().borders(Borders::ALL).title("summary"));
         Widget::render(list, area, buf);
 
         Ok(())
@@ -244,7 +245,11 @@ impl TaggerApp {
         let items = files
             .into_iter()
             .map(|f| f.tags.title().unwrap().to_string());
-        Widget::render(List::new(items).dim(), area, buf);
+        Widget::render(
+            List::new(items).block(Block::default().title("tags")),
+            area,
+            buf,
+        );
     }
 
     pub fn render_discogs(
@@ -261,21 +266,22 @@ impl TaggerApp {
         )
         .results;
 
-        // TODO: iterate through results; requires extra state in TaggerApp
         // TODO: cache results into some hashmap
-        match results.first() {
+        // TODO: iterate through results (h/l); requires extra state in TaggerApp
+
+        let block = Block::default().borders(Borders::LEFT);
+
+        let list = match results.first() {
             Some(res) => {
                 let rel = res.as_rel();
                 let tracks = rel.tracklist();
-                let items = tracks.iter().map(|t| t.as_list_item());
-                let list = List::new(items);
-                Widget::render(list, area, buf);
+                let items = tracks.iter().map(|t| t.to_string());
+                // TODO: search url?
+                List::new(items).block(block.title(rel.uri.clone()))
             }
-            _ => {
-                let list = List::new(["Not found"]);
-                Widget::render(list, area, buf);
-            }
+            None => List::default().block(block.title("not found")),
         };
+        Widget::render(list, area, buf);
 
         Ok(())
     }
