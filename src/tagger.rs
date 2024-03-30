@@ -22,7 +22,6 @@ use crate::io::Walk;
 pub struct TaggerApp {
     dir_state: ListState,
     items: Vec<DirEntry>,
-    last_selected: Option<usize>,
 }
 
 impl TaggerApp {
@@ -35,7 +34,6 @@ impl TaggerApp {
                 state
             },
             items,
-            last_selected: None,
         }
     }
 
@@ -89,31 +87,32 @@ impl TaggerApp {
 
     /// Allows wrap-around
     fn next(&mut self) {
-        let i = match self.dir_state.selected() {
-            Some(i) => {
-                if i >= self.items.len() - 1 {
-                    0
-                } else {
-                    i + 1
-                }
-            }
-            None => self.last_selected.unwrap_or(0),
-        };
-        self.dir_state.select(Some(i));
+        // an item will always be selected in this app
+        let curr = self.dir_state.selected().unwrap();
+
+        let new = curr
+            .ge(&(self.items.len() - 1)) // last item, wrap-around
+            .then_some(0)
+            .or(Some(curr + 1));
+
+        // let new = Some(if curr >= self.items.len() - 1 {
+        //     0
+        // } else {
+        //     curr + 1
+        // });
+
+        self.dir_state.select(new);
     }
 
     fn previous(&mut self) {
-        let i = match self.dir_state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.items.len() - 1
-                } else {
-                    i - 1
-                }
-            }
-            None => self.last_selected.unwrap_or(0),
-        };
-        self.dir_state.select(Some(i));
+        let curr = self.dir_state.selected().unwrap();
+
+        let new = curr
+            .eq(&0) // last item, wrap-around
+            .then_some(self.items.len() - 1)
+            .or(Some(curr - 1));
+
+        self.dir_state.select(new);
     }
 
     // TODO: get tags -> search discogs
