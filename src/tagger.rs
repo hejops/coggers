@@ -16,22 +16,25 @@ use crossterm::ExecutableCommand;
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 use walkdir::DirEntry;
-use walkdir::WalkDir;
 
-use crate::io::Sort;
 use crate::io::Walk;
 
 pub struct TaggerApp {
-    state: ListState,
-    items: Vec<String>, // TODO: &str (lifetimes...)
+    dir_state: ListState,
+    items: Vec<DirEntry>,
     last_selected: Option<usize>,
 }
 
 impl TaggerApp {
     pub fn with_items(items: Vec<DirEntry>) -> Self {
         TaggerApp {
-            state: ListState::default(), //.with_offset(3),
-            items: items.iter().map(|f| f.as_str().to_string()).collect(),
+            dir_state: {
+                // note: highlight only becomes visible when an item is selected
+                let mut state = ListState::default();
+                state.select(Some(0));
+                state
+            },
+            items,
             last_selected: None,
         }
     }
@@ -84,8 +87,9 @@ impl TaggerApp {
 
     // state management
 
+    /// Allows wrap-around
     fn next(&mut self) {
-        let i = match self.state.selected() {
+        let i = match self.dir_state.selected() {
             Some(i) => {
                 if i >= self.items.len() - 1 {
                     0
@@ -95,11 +99,11 @@ impl TaggerApp {
             }
             None => self.last_selected.unwrap_or(0),
         };
-        self.state.select(Some(i));
+        self.dir_state.select(Some(i));
     }
 
     fn previous(&mut self) {
-        let i = match self.state.selected() {
+        let i = match self.dir_state.selected() {
             Some(i) => {
                 if i == 0 {
                     self.items.len() - 1
@@ -109,7 +113,7 @@ impl TaggerApp {
             }
             None => self.last_selected.unwrap_or(0),
         };
-        self.state.select(Some(i));
+        self.dir_state.select(Some(i));
     }
 
     // TODO: get tags -> search discogs
@@ -126,26 +130,19 @@ impl Widget for &mut TaggerApp {
         Self: Sized,
     {
         // Layout::vertical == horizontal split
-        let vertical = Layout::vertical([
+        let hsplit = Layout::vertical([
             Constraint::Length(6),
             Constraint::Length(1),
             Constraint::Min(0),
         ]);
-        let [upper, _, lower] = vertical.areas(area);
+        let [upper, _, lower] = hsplit.areas(area);
 
-        let foo = Layout::horizontal(Constraint::from_percentages([49, 2, 49]));
-        let [left, _, right] = foo.areas(lower);
+        let vsplit = Layout::horizontal(Constraint::from_percentages([49, 2, 49]));
+        let [left, _, right] = vsplit.areas(lower);
 
         self.render_dirs(upper, buf);
         self.render_files(left, buf);
-        self.render_files(right, buf); // TODO: discogs
-    }
-}
-
-impl Walk for &String {
-    fn walk(&self) -> impl Iterator<Item = DirEntry> {
-        // 1;
-        WalkDir::new(self).into_iter().filter_map(|f| f.ok())
+        self.render_discogs(right, buf);
     }
 }
 
@@ -155,17 +152,45 @@ impl TaggerApp {
         area: Rect,
         buf: &mut Buffer,
     ) {
-        // note: highlight only becomes visible when an item is selected
-        // TODO: don't clone!
-        let list = List::new(self.items.clone()).highlight_symbol("> ");
-        StatefulWidget::render(list, area, buf, &mut self.state);
+        let items: Vec<ListItem> = self.items.iter().map(|f| f.as_list_item()).collect();
+        StatefulWidget::render(
+            List::new(items).highlight_symbol("> "),
+            area,
+            buf,
+            &mut self.dir_state,
+        );
     }
+
     pub fn render_files(
         &mut self,
         area: Rect,
         buf: &mut Buffer,
     ) {
-        match self.state.selected() {
+        match self.dir_state.selected() {
+            None => (),
+            Some(idx) => {
+                // this has to be String, since file entries are not persistently stored
+                let mut files: Vec<String> = self
+                    .items
+                    .get(idx)
+                    .unwrap()
+                    .to_owned()
+                    .walk()
+                    // yeah...
+                    .map(|f| f.path().file_name().unwrap().to_str().unwrap().to_owned())
+                    .collect();
+                files.sort();
+                Widget::render(List::new(files).dim(), area, buf);
+            }
+        }
+    }
+
+    pub fn render_discogs(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+    ) {
+        match self.dir_state.selected() {
             None => (),
             Some(idx) => {
                 let files: Vec<String> = self
@@ -175,7 +200,6 @@ impl TaggerApp {
                     .walk()
                     .map(|f| f.as_str().to_string())
                     .collect();
-                // TODO: sort files
                 let list = List::new(files);
                 Widget::render(list, area, buf);
             }
