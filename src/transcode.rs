@@ -5,10 +5,11 @@ use std::iter::zip;
 
 use anyhow::Result;
 use id3::TagLike;
+use ratatui::widgets::ListItem;
 use walkdir::DirEntry;
 use walkdir::WalkDir;
 
-use crate::io::get_sorted_files;
+use crate::io::Sort;
 use crate::io::Walk;
 use crate::release::Release;
 
@@ -41,41 +42,6 @@ pub enum FileType {
     FLAC,
 }
 
-/// Assumed to be a flat listing of directories only (?), of the form
-/// `<source>/<dir>`.
-pub struct Source {
-    root: String,
-    pub dirs: Vec<DirEntry>,
-}
-
-impl Source {
-    /// This is literally identical to `Library::new`; there must be a better
-    /// way to do this...
-    //
-    // the root cause of this duplication is that we want to generalise Walk to
-    // WalkDir::DirEntry, which does not need to have a new(). thus, for our own
-    // structs, we need to first init a self with empty .dirs, just to be able
-    // to call .walk()
-    pub fn new(root: &str) -> Self {
-        let root = root.to_string();
-        let dirs = vec![];
-        let mut lib = Self { root, dirs };
-        lib.dirs = lib.walk().collect();
-        lib
-    }
-}
-
-impl Walk for Source {
-    fn walk(&self) -> impl Iterator<Item = DirEntry> {
-        WalkDir::new(&self.root)
-            .min_depth(1)
-            .max_depth(1)
-            .into_iter()
-            .filter_entry(|e| e.file_type().is_dir())
-            .filter_map(|e| e.ok())
-    }
-}
-
 impl Walk for DirEntry {
     fn walk(&self) -> impl Iterator<Item = DirEntry> {
         WalkDir::new(self.path())
@@ -83,12 +49,20 @@ impl Walk for DirEntry {
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().is_file())
     }
+    // do errors need to be handled?
+    fn as_str(&self) -> &str { self.path().to_str().unwrap() }
+    fn as_dir(&self) -> DirEntry { self.clone() }
+    fn as_list_item(&self) -> ListItem {
+        //
+        // ListItem::new(self.as_str()) // fullpath
+        // TODO: color based on filetype
+        ListItem::new(self.path().file_name().unwrap().to_str().unwrap())
+    }
 }
 
-/// Wrapper over `audiotags::Tag`
+/// Wrapper over `id3::Tag`
 pub struct File {
     pub path: String,
-    // raw_tags: Box<dyn AudioTag + Send + Sync>, // audiotags
     pub tags: id3::Tag,
 }
 
@@ -101,7 +75,7 @@ pub enum TagField {
 }
 
 impl File {
-    fn get(
+    pub fn get(
         &self,
         field: TagField,
     ) -> Option<String> {
@@ -146,8 +120,10 @@ impl Display for File {
 }
 
 pub struct SourceDir {
-    path: String,
-    pub tags: Vec<File>,
+    // i refuse to allow a `state: ListState` field, as the data and interface must be kept
+    // separate
+    pub path: String,
+    pub dir: DirEntry,
 }
 impl SourceDir {
     pub fn new(path: &str) -> Result<Self> {
@@ -155,17 +131,22 @@ impl SourceDir {
             .into_iter()
             .next()
             .expect("root dir returned")?;
-        let files = get_sorted_files(&dir)
-            .iter()
-            // .map(|path| File::new(dir_to_str(path)))
-            .map(File::new)
-            .filter_map(|p| p.ok())
-            .collect();
         Ok(Self {
             path: path.to_string(),
-            tags: files,
+            dir,
         })
     }
+
+    pub fn tags(&self) -> Vec<File> {
+        self.dir
+            .sort(true)
+            .iter()
+            .map(File::new)
+            .filter_map(|p| p.ok())
+            .collect()
+    }
+
+    pub fn dirs(&self) -> Vec<DirEntry> { self.dir.sort(false) }
 }
 
 // should probably be used as the return type for matches_discogs (instead of
@@ -186,7 +167,7 @@ impl SourceDir {
     ///   if `None` can be returned
     /// - durations are returned in milliseconds, so we convert to seconds
     pub fn durations(&self) -> Vec<Option<u32>> {
-        self.tags
+        self.tags()
             .iter()
             .map(|t| t.tags.duration()) //.unwrap_or(0))
             .map(|d| d.map(|d| d / 1000)) // Option.map in Iterator.map is wild
@@ -197,7 +178,7 @@ impl SourceDir {
         &self,
         rel: &Release,
     ) -> bool {
-        if self.tags.len() != rel.tracklist().len() {
+        if self.tags().len() != rel.tracklist().len() {
             return false;
         }
 
@@ -213,7 +194,7 @@ impl SourceDir {
         &mut self,
         rel: &Release,
     ) -> Result<()> {
-        for (discogs_track, file) in rel.tracklist().iter().zip(&mut self.tags) {
+        for (discogs_track, file) in rel.tracklist().iter().zip(&mut self.tags()) {
             // println!("{}\n{}", discogs_track, file);
 
             // println!("{}\n{:?}", discogs_track.title, file.get(TagField::Title));

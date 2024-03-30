@@ -4,6 +4,8 @@
 use std::io;
 use std::io::stdout;
 
+use anyhow::Context;
+use anyhow::Result;
 use crossterm::event;
 use crossterm::event::Event;
 use crossterm::event::KeyCode;
@@ -18,6 +20,9 @@ use ratatui::widgets::*;
 use walkdir::DirEntry;
 
 use crate::io::Walk;
+use crate::release::Release;
+use crate::transcode::File;
+use crate::transcode::TagField;
 
 pub struct TaggerApp {
     dir_state: ListState,
@@ -62,9 +67,13 @@ impl TaggerApp {
                     use KeyCode::*;
                     match key.code {
                         Char('q') | Esc => return Ok(()),
+
+                        Char('J') | PageDown => self.next(5),
+                        Char('K') | PageUp => self.previous(5),
+                        Char('j') | Down => self.next(1),
+                        Char('k') | Up => self.previous(1),
+
                         // Char('h') | Left => self.items.unselect(),
-                        Char('j') | Down => self.next(),
-                        Char('k') | Up => self.previous(),
                         // Char('l') | Right | Enter => self.change_status(),
                         // Char('g') => self.go_top(),
                         // Char('G') => self.go_bottom(),
@@ -86,25 +95,25 @@ impl TaggerApp {
     // state management
 
     /// Allows wrap-around
-    fn next(&mut self) {
+    fn next(
+        &mut self,
+        step: usize,
+    ) {
         // an item will always be selected in this app
         let curr = self.dir_state.selected().unwrap();
 
         let new = curr
-            .ge(&(self.items.len() - 1)) // last item, wrap-around
+            .ge(&(self.items.len() - step)) // last item, wrap-around
             .then_some(0)
-            .or(Some(curr + 1));
-
-        // let new = Some(if curr >= self.items.len() - 1 {
-        //     0
-        // } else {
-        //     curr + 1
-        // });
+            .or(Some(curr + step));
 
         self.dir_state.select(new);
     }
 
-    fn previous(&mut self) {
+    fn previous(
+        &mut self,
+        step: usize,
+    ) {
         // let curr = self.dir_state.selected().unwrap();
         // let new = curr
         //     .eq(&0)
@@ -114,15 +123,13 @@ impl TaggerApp {
         let new = {
             let curr = self.dir_state.selected().unwrap();
             match curr {
-                0 => self.items.len() - 1,
-                _ => curr - 1,
+                0 => self.items.len() - step,
+                _ => curr - step,
             }
         };
 
         self.dir_state.select(Some(new));
     }
-
-    // TODO: get tags -> search discogs
 }
 
 // rendering
@@ -143,12 +150,14 @@ impl Widget for &mut TaggerApp {
         ]);
         let [upper, _, lower] = hsplit.areas(area);
 
+        // TODO: 3-split? (files, tags, discogs tracklist)
         let vsplit = Layout::horizontal(Constraint::from_percentages([49, 2, 49]));
         let [left, _, right] = vsplit.areas(lower);
 
         self.render_dirs(upper, buf);
         self.render_files(left, buf);
         self.render_discogs(right, buf);
+        // TODO: footer with keybindings
     }
 }
 
@@ -158,6 +167,7 @@ impl TaggerApp {
         area: Rect,
         buf: &mut Buffer,
     ) {
+        // TODO: basename
         let items: Vec<ListItem> = self.items.iter().map(|f| f.as_list_item()).collect();
         StatefulWidget::render(
             List::new(items).highlight_symbol("> "),
@@ -167,48 +177,51 @@ impl TaggerApp {
         );
     }
 
+    pub fn get_files(&self) -> impl Iterator<Item = DirEntry> + '_ {
+        self.items
+            .get(self.dir_state.selected().unwrap())
+            .unwrap()
+            .walk()
+    }
+
     pub fn render_files(
         &mut self,
         area: Rect,
         buf: &mut Buffer,
     ) {
-        match self.dir_state.selected() {
-            None => (),
-            Some(idx) => {
-                // this has to be String, since file entries are not persistently stored
-                let mut files: Vec<String> = self
-                    .items
-                    .get(idx)
-                    .unwrap()
-                    .to_owned()
-                    .walk()
-                    // yeah...
-                    .map(|f| f.path().file_name().unwrap().to_str().unwrap().to_owned())
-                    .collect();
-                files.sort();
-                Widget::render(List::new(files).dim(), area, buf);
-            }
-        }
+        // this has to be String, since file entries are not persistently stored by
+        // TaggerApp
+        let mut items: Vec<String> = self
+            .get_files()
+            // yeah...
+            // TODO: add basename method in Walk
+            .map(|f| f.path().file_name().unwrap().to_str().unwrap().to_owned())
+            .collect();
+        items.sort();
+        Widget::render(List::new(items).dim(), area, buf);
     }
 
     pub fn render_discogs(
         &mut self,
         area: Rect,
         buf: &mut Buffer,
-    ) {
-        match self.dir_state.selected() {
-            None => (),
-            Some(idx) => {
-                let files: Vec<String> = self
-                    .items
-                    .get(idx)
-                    .unwrap()
-                    .walk()
-                    .map(|f| f.as_str().to_string())
-                    .collect();
-                let list = List::new(files);
-                Widget::render(list, area, buf);
-            }
-        }
+    ) -> Result<()> {
+        let f = self.get_files().find(|f| f.file_type().is_file()).unwrap();
+        let f = File::new(&f)?;
+
+        let results = Release::search(
+            &f.get(TagField::Artist).unwrap(),
+            &f.get(TagField::Album).unwrap(),
+        )
+        .results;
+
+        // TODO: iterate through results; requires extra state in TaggerApp
+        let rel = results.first().context("no results")?.as_rel();
+        let tracks = rel.tracklist();
+        let items = tracks.iter().map(|t| t.as_list_item());
+        let list = List::new(items);
+        Widget::render(list, area, buf);
+
+        Ok(())
     }
 }

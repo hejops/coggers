@@ -8,7 +8,9 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::anyhow;
-use lazy_static::lazy_static; /* see also: https://github.com/matklad/once_cell, https://blog.logrocket.com/rust-lazy-static-pattern/#differences-between-lazy-static-oncecell-lazylock */
+use lazy_static::lazy_static;
+use ratatui::widgets::ListItem;
+/* see also: https://github.com/matklad/once_cell, https://blog.logrocket.com/rust-lazy-static-pattern/#differences-between-lazy-static-oncecell-lazylock */
 use rusqlite::Connection;
 use rusqlite::Result;
 use walkdir::DirEntry;
@@ -28,36 +30,60 @@ lazy_static! {
     pub static ref SOURCE: String = env::var("SOURCE").expect("Environment variable $SOURCE must be set");
 }
 
+/// Helper trait to simplify interconversion between String/&str and DirEntry.
 pub trait Walk {
-    /// We return `Iterator` and defer collection to callers.
+    /// Return `Iterator`, collection is deferred to callers.
     fn walk(&self) -> impl Iterator<Item = DirEntry>;
-    // fn walk(root: &str) -> impl Iterator<Item = DirEntry>;
-    // fn walk(root: impl AsRef<Path>) -> impl Iterator<Item = DirEntry>;
+    fn as_str(&self) -> &str;
+    fn as_dir(&self) -> DirEntry;
+    fn as_list_item(&self) -> ListItem;
 }
 
-// do errors need to be handled?
-fn dir_to_str(dir: &DirEntry) -> &str { dir.path().to_str().unwrap() }
+impl Walk for &str {
+    fn walk(&self) -> impl Iterator<Item = DirEntry> {
+        WalkDir::new(self).into_iter().filter_map(|f| f.ok())
+    }
+    fn as_str(&self) -> &str { self }
+    fn as_dir(&self) -> DirEntry { WalkDir::new(self).into_iter().next().unwrap().unwrap() }
+    fn as_list_item(&self) -> ListItem { ListItem::new(self.as_str()) }
+}
 
-/// Walk 1 level, collect files, return as sorted vec
-pub fn get_sorted_files(dir: &DirEntry) -> Vec<DirEntry> {
-    let mut files: Vec<DirEntry> = WalkDir::new(dir_to_str(dir))
-        .into_iter()
-        // TODO: depth 1
-        // .filter_entry is more strict than filter, as iteration is stopped as soon as the
-        // first predicate is false; in this case, the first item is the dir itself,
-        // which returns false!
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .collect();
+pub trait Sort {
+    fn sort(
+        &self,
+        files_only: bool,
+    ) -> Vec<DirEntry>;
+}
 
-    files.sort_by(|a, b| dir_to_str(a).cmp(dir_to_str(b)));
-    files
+impl Sort for DirEntry {
+    /// Walk 1 level, collect files, return as sorted vec
+    fn sort(
+        &self,
+        files: bool,
+    ) -> Vec<DirEntry> {
+        let x = WalkDir::new(self.as_str())
+            .min_depth(1)
+            .max_depth(1)
+            .into_iter()
+            // .filter_entry is more strict than filter, as iteration is stopped as soon as the
+            // first predicate is false; in this case, the first item is the dir itself,
+            // which returns false!
+            .filter_map(|e| e.ok());
+
+        let mut files: Vec<DirEntry> = match files {
+            true => x.filter(|e| e.file_type().is_file()).collect(),
+            false => x.filter(|e| e.file_type().is_dir()).collect(),
+        };
+
+        files.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        files
+    }
 }
 
 impl File {
     pub fn new(f: &DirEntry) -> anyhow::Result<Self> {
         assert!(f.file_type().is_file());
-        let path = dir_to_str(f);
+        let path = f.as_str();
         let tag = id3::Tag::read_from_path(path)?;
         Ok(Self {
             path: path.to_string(),
@@ -66,11 +92,9 @@ impl File {
     }
 }
 
-/// `Library` contains directories...
 pub struct Library {
     root: String,
     dirs: Vec<DirEntry>,
-    // dirs: dyn Iterator<Item = DirEntry>,
 }
 
 impl Library {
@@ -114,6 +138,15 @@ impl Walk for Library {
         // returning a Filter[Map] at compile time is relatively easy, returning
         // a Map is not -- https://stackoverflow.com/a/27497032
     }
+    fn as_dir(&self) -> DirEntry {
+        WalkDir::new(&self.root)
+            .into_iter()
+            .next()
+            .unwrap()
+            .unwrap()
+    }
+    fn as_str(&self) -> &str { &self.root }
+    fn as_list_item(&self) -> ListItem { ListItem::new(self.as_str()) }
 }
 
 #[derive(Debug, PartialEq)]
@@ -155,12 +188,12 @@ impl LibraryEntry {
 ///
 /// The directory structure is strictly adhered to:
 ///     `<db_path>/<artist>/<album> (<year>)`
-pub struct Database {
+pub struct LibraryDB {
     db_path: String,
     pub entries: Vec<LibraryEntry>,
 }
 
-impl Database {
+impl LibraryDB {
     /// Load from static sqlite db.
     pub fn load(db_path: &str) -> Result<Self> {
         let conn = Connection::open(db_path)?;
@@ -221,8 +254,8 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
-    use crate::io::Database;
     use crate::io::Library;
+    use crate::io::LibraryDB;
     use crate::io::LibraryEntry;
     use crate::io::Walk;
     use crate::io::LIBRARY_ROOT;
@@ -235,7 +268,7 @@ mod tests {
 
     #[test]
     fn test_db_load() {
-        let db = Database::load("test.db").unwrap();
+        let db = LibraryDB::load("test.db").unwrap();
         let first = db.entries.first();
         assert!(first.is_some());
         assert!(db.entries.len() > 1);
