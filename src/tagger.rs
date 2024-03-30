@@ -105,14 +105,21 @@ impl TaggerApp {
     }
 
     fn previous(&mut self) {
-        let curr = self.dir_state.selected().unwrap();
+        // let curr = self.dir_state.selected().unwrap();
+        // let new = curr
+        //     .eq(&0)
+        //     .then_some(self.items.len() - 1) // first item, wrap-around
+        //     .or(Some(curr - 1)); // curr-1 is an underflow, and i have no idea why
 
-        let new = curr
-            .eq(&0) // last item, wrap-around
-            .then_some(self.items.len() - 1)
-            .or(Some(curr - 1));
+        let new = {
+            let curr = self.dir_state.selected().unwrap();
+            match curr {
+                0 => self.items.len() - 1,
+                _ => curr - 1,
+            }
+        };
 
-        self.dir_state.select(new);
+        self.dir_state.select(Some(new));
     }
 
     // TODO: get tags -> search discogs
