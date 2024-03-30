@@ -1,8 +1,13 @@
 //! Transcoding and preservation of metadata across formats
 
 use std::fmt::Display;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::iter::zip;
+use std::process::Command;
+use std::process::Stdio;
 
+use anyhow::Context;
 use anyhow::Result;
 use id3::TagLike;
 use lofty::AudioFile;
@@ -32,7 +37,7 @@ use crate::release::Release;
 // mp3/m4a/flac https://github.com/TianyiShi2001/audiotags -- i don't like the typing (Box? Album?)
 // TODO: opus
 
-/// Mainly for transcoding (symphonia?). For metadata, id3 is always used.
+/// Mainly for transcoding. For metadata, id3 is always used.
 #[derive(Debug)]
 pub enum FileType {
     // Lossy
@@ -54,24 +59,29 @@ impl Walk for DirEntry {
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().is_file())
     }
-    // do errors need to be handled?
+    /// UTF-8 errors are ignored
     fn as_str(&self) -> &str { self.path().to_str().unwrap() }
     fn as_dir(&self) -> DirEntry { self.clone() }
+    /// basename
     fn as_list_item(&self) -> ListItem {
-        //
         // ListItem::new(self.as_str()) // fullpath
         // TODO: color based on filetype
         ListItem::new(self.path().file_name().unwrap().to_str().unwrap())
     }
 }
 
-/// Wrapper over `id3::Tag`
+/// Wrapper over `id3::Tag`. It is important to note that metadata can be read
+/// and stored completely separately from the audio file. Implements some
+/// transcoding methods for convenience.
 #[derive(Debug)]
 pub struct File {
     pub path: String,
+
     pub file_type: FileType,
-    /// To avoid the need for an adapter over different tag containers (and
-    /// since I always transcode into MP3), id3 is used.
+
+    /// To avoid the need for an adapter over different audio formats and tag
+    /// containers (and since I always transcode into MP3), we default to
+    /// `id3`. Under the hood, other crates like `lofty` are used.
     pub tags: id3::Tag,
 }
 
@@ -88,11 +98,11 @@ pub enum TagField {
 impl File {
     pub fn new(path: &str) -> anyhow::Result<Self> {
         let ft = infer::get_from_path(path)
-            .expect("read file")
-            .expect("infer filetype")
-            .extension(); // disregards the actual filetype
+            .context("read file")?
+            .context("infer filetype")?
+            .extension(); // note: this disregards the actual filetype
 
-        let ft = match ft {
+        let file_type = match ft {
             "mp3" => FileType::MP3,
             "flac" => FileType::FLAC,
             _ => FileType::Unknown,
@@ -101,7 +111,7 @@ impl File {
         // init with empty tags, so we can use File.get for convenience
         let mut f = Self {
             path: path.to_string(),
-            file_type: ft,
+            file_type,
             tags: id3::Tag::new(),
         };
 
@@ -125,7 +135,7 @@ impl File {
                 let flacfile = lofty::flac::FlacFile::read_from(&mut buf, ParseOptions::default())?;
                 let comments = flacfile.vorbis_comments().unwrap();
 
-                println!("{:?}", comments);
+                // println!("{:?}", comments);
 
                 for (tag, com) in [
                     // 2nd value should be [&str], probably
@@ -140,8 +150,12 @@ impl File {
                     }
                 }
 
-                println!("{:?}", f.tags);
-                // nothing to save yet
+                // println!("{:#?}", f.tags);
+
+                // // nothing to save yet
+                // f.tags.write_to_path(path, id3::Version::Id3v24)?;
+
+                f.transcode()?;
             }
         };
 
@@ -179,7 +193,36 @@ impl File {
         }
     }
 
-    pub fn transcode() {}
+    pub fn transcode(&self) -> Result<()> {
+        // "lame --silent -V 0 --disptime 1";
+
+        // https://doc.rust-lang.org/std/process/index.html#handling-io
+
+        // "flac in.flac --decode --stdout --totally-silent |
+        // lame --silent -V 0 - out.mp3"
+
+        let flac = Command::new("flac")
+            .arg(&self.path)
+            .args("--decode --stdout --totally-silent".split_whitespace())
+            .stdout(Stdio::piped())
+            .spawn()?;
+        let lame = Command::new("lame")
+            .args("--silent -V 0 -".split_whitespace())
+            .stdin(Stdio::from(flac.stdout.context("no flac stdout")?))
+            .stdout(Stdio::piped())
+            .spawn()?;
+        let output = lame.wait_with_output()?.stdout;
+        let mut buf = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open("foo.mp3")?;
+        buf.write_all(&output)?;
+
+        // "ffmpeg -y -i";
+        // "lame --silent {BITRATE_ARG} --disptime 1";
+
+        Ok(())
+    }
 }
 
 impl Display for File {
@@ -197,8 +240,6 @@ impl Display for File {
 }
 
 pub struct SourceDir {
-    // i refuse to allow a `state: ListState` field, as the data and interface must be kept
-    // separate
     pub path: String,
     pub dir: DirEntry,
 }
