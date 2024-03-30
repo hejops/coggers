@@ -15,13 +15,17 @@ use crossterm::terminal::enable_raw_mode;
 use crossterm::terminal::EnterAlternateScreen;
 use crossterm::terminal::LeaveAlternateScreen;
 use crossterm::ExecutableCommand;
+use id3::TagLike;
+use itertools::Itertools;
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 use walkdir::DirEntry;
 
 use crate::io::Walk;
+use crate::io::SOURCE;
 use crate::release::Release;
 use crate::transcode::File;
+use crate::transcode::SourceDir;
 use crate::transcode::TagField;
 
 pub struct TaggerApp {
@@ -146,17 +150,26 @@ impl Widget for &mut TaggerApp {
         let hsplit = Layout::vertical([
             Constraint::Length(6),
             Constraint::Length(1),
+            Constraint::Length(6),
+            Constraint::Length(1),
             Constraint::Min(0),
         ]);
-        let [upper, _, lower] = hsplit.areas(area);
-
-        // TODO: 3-split? (files, tags, discogs tracklist)
-        let vsplit = Layout::horizontal(Constraint::from_percentages([49, 2, 49]));
-        let [left, _, right] = vsplit.areas(lower);
+        let [upper, _, middle, _, lower] = hsplit.areas(area);
 
         self.render_dirs(upper, buf);
-        self.render_files(left, buf);
+        self.render_summary(middle, buf);
+
+        // let vsplit = Layout::horizontal(Constraint::from_percentages([32, 2, 32, 2,
+        // 32])); let [left, _, middle, _, right] = vsplit.areas(lower);
+        // self.render_files(left, buf);
+        // self.render_tags(middle, buf);
+        // self.render_discogs(right, buf);
+
+        let vsplit = Layout::horizontal(Constraint::from_percentages([49, 2, 49]));
+        let [left, _, right] = vsplit.areas(lower);
+        self.render_tags(left, buf);
         self.render_discogs(right, buf);
+
         // TODO: footer with keybindings
     }
 }
@@ -177,6 +190,21 @@ impl TaggerApp {
         );
     }
 
+    pub fn render_summary(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+    ) -> Result<()> {
+        let f = self.get_files().find(|f| f.file_type().is_file()).unwrap();
+        let f = File::new(f.as_str())?;
+
+        let summary = f.to_string();
+        let list = List::new(summary.split('\n'));
+        Widget::render(list, area, buf);
+
+        Ok(())
+    }
+
     pub fn get_files(&self) -> impl Iterator<Item = DirEntry> + '_ {
         self.items
             .get(self.dir_state.selected().unwrap())
@@ -191,13 +219,31 @@ impl TaggerApp {
     ) {
         // this has to be String, since file entries are not persistently stored by
         // TaggerApp
-        let mut items: Vec<String> = self
+        let items: Vec<String> = self
             .get_files()
             // yeah...
             // TODO: add basename method in Walk
             .map(|f| f.path().file_name().unwrap().to_str().unwrap().to_owned())
+            .sorted()
             .collect();
-        items.sort();
+        Widget::render(List::new(items).dim(), area, buf);
+    }
+
+    pub fn render_tags(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+    ) {
+        let files = self
+            .get_files()
+            .filter(|f| f.file_type().is_file())
+            .map(|f| f.as_str().to_string())
+            .sorted()
+            .map(|f| File::new(&f))
+            .filter_map(|f| f.ok());
+        let items = files
+            .into_iter()
+            .map(|f| f.tags.title().unwrap().to_string());
         Widget::render(List::new(items).dim(), area, buf);
     }
 
@@ -207,7 +253,7 @@ impl TaggerApp {
         buf: &mut Buffer,
     ) -> Result<()> {
         let f = self.get_files().find(|f| f.file_type().is_file()).unwrap();
-        let f = File::new(&f)?;
+        let f = File::new(f.as_str())?;
 
         let results = Release::search(
             &f.get(TagField::Artist).unwrap(),
@@ -216,12 +262,26 @@ impl TaggerApp {
         .results;
 
         // TODO: iterate through results; requires extra state in TaggerApp
-        let rel = results.first().context("no results")?.as_rel();
-        let tracks = rel.tracklist();
-        let items = tracks.iter().map(|t| t.as_list_item());
-        let list = List::new(items);
-        Widget::render(list, area, buf);
+        // TODO: cache results into some hashmap
+        match results.first() {
+            Some(res) => {
+                let rel = res.as_rel();
+                let tracks = rel.tracklist();
+                let items = tracks.iter().map(|t| t.as_list_item());
+                let list = List::new(items);
+                Widget::render(list, area, buf);
+            }
+            _ => {
+                let list = List::new(["Not found"]);
+                Widget::render(list, area, buf);
+            }
+        };
 
         Ok(())
     }
+}
+
+pub fn main() {
+    let dir = SourceDir::new(&SOURCE).unwrap();
+    TaggerApp::with_items(dir.dirs()).main().unwrap();
 }
