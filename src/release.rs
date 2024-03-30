@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
 use anyhow::Result;
+use ratatui::widgets::ListItem;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -25,6 +26,13 @@ pub struct Track {
     pub duration: String,
     type_: TrackType,
     pub sub_tracks: Option<Vec<Track>>,
+}
+
+impl Track {
+    pub fn as_list_item(&self) -> ListItem {
+        //
+        ListItem::new(self.title.as_str())
+    }
 }
 
 impl Display for Track {
@@ -80,7 +88,7 @@ pub struct Master {
 
     /// Genres are distinct from styles.
     pub genres: Vec<String>,
-    pub notes: String,
+    pub notes: Option<String>,
     pub title: String,
 
     pub artists: Vec<Artist>,
@@ -88,7 +96,7 @@ pub struct Master {
     /// counterexamples)
     pub tracklist: Vec<Track>,
 
-    lowest_price: f32,
+    lowest_price: Option<f32>,
     num_for_sale: usize,
 }
 
@@ -123,11 +131,11 @@ pub struct Release {
     /// Single string representation of the (main) Artists involved in a
     /// Release.
     pub artists_sort: String,
-    pub country: String,
+    pub country: Option<String>,
 
     /// Genres are distinct from styles.
     pub genres: Vec<String>,
-    pub notes: String,
+    pub notes: Option<String>,
     pub title: String,
 
     pub artists: Vec<Artist>,
@@ -143,7 +151,7 @@ pub struct Release {
     // identifiers: Vec,
     /// The currency is assumed from the locale and not specified in the
     /// response.
-    lowest_price: f32,
+    lowest_price: Option<f32>,
     num_for_sale: usize,
 }
 
