@@ -111,6 +111,8 @@ impl TaggerApp {
         };
         self.state.select(Some(i));
     }
+
+    // TODO: get tags -> search discogs
 }
 
 // rendering
@@ -123,15 +125,20 @@ impl Widget for &mut TaggerApp {
     ) where
         Self: Sized,
     {
+        // Layout::vertical == horizontal split
         let vertical = Layout::vertical([
             Constraint::Length(6),
             Constraint::Length(1),
             Constraint::Min(0),
         ]);
-        let [dirs, spacer, files] = vertical.areas(area);
+        let [upper, _, lower] = vertical.areas(area);
 
-        self.render_dirs(dirs, buf);
-        self.render_files(files, buf);
+        let foo = Layout::horizontal(Constraint::from_percentages([49, 2, 49]));
+        let [left, _, right] = foo.areas(lower);
+
+        self.render_dirs(upper, buf);
+        self.render_files(left, buf);
+        self.render_files(right, buf); // TODO: discogs
     }
 }
 
@@ -168,6 +175,7 @@ impl TaggerApp {
                     .walk()
                     .map(|f| f.as_str().to_string())
                     .collect();
+                // TODO: sort files
                 let list = List::new(files);
                 Widget::render(list, area, buf);
             }
