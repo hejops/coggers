@@ -146,6 +146,7 @@ impl File {
             (TagField::Artist, "ARTIST"),
             (TagField::Album, "ALBUM"),
             (TagField::Year, "DATE"),
+            (TagField::Genre, "GENRE"),
         ] {
             if let Some(val) = comments.get(com) {
                 self.set(tag, val);
