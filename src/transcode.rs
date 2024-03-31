@@ -19,23 +19,6 @@ use crate::io::Sort;
 use crate::io::Walk;
 use crate::release::Release;
 
-// transcoding
-// flac
-// https://github.com/ruuda/claxon
-// https://github.com/ruuda/claxon/blob/master/examples/decode_simple.rs -- i like the idea of
-// transcoding sample-by-sample; as long as mp3s also have a raw byte array
-// (&[u16]) representation
-
-// lame vbr is not very well documented; under the hood, v0 is 'preset mode
-// 500', whatever that means...
-// https://lame.sourceforge.io/vbr.php
-// has v0, but is called Best (lol) https://github.com/DoumanAsh/mp3lame-encoder
-
-// metadata
-// mp3/wav/aiff https://github.com/polyfloyd/rust-id3
-// mp3/m4a/flac https://github.com/TianyiShi2001/audiotags -- i don't like the typing (Box? Album?)
-// TODO: opus
-
 /// Mainly for transcoding. For metadata, id3 is always used.
 #[derive(Debug)]
 pub enum FileType {
@@ -95,8 +78,23 @@ pub enum TagField {
     Genre,
 }
 
+#[derive(Debug)]
+// not sure how this should be implemented
+pub enum TranscodeResult {
+    Success,
+    NotNeeded,
+    Unrecognized,
+    Failure,
+}
+
+// #[derive(Debug)]
+// pub enum TranscodeResult {
+//     Ok(Success | NotNeeded),
+//     Err(Unrecognized | Failure),
+// }
+
 impl File {
-    pub fn new(path: &str) -> anyhow::Result<Self> {
+    pub fn new(path: &str) -> Result<Self> {
         let ft = infer::get_from_path(path)
             .context("read file")?
             .context("infer filetype")?
@@ -105,6 +103,7 @@ impl File {
         let file_type = match ft {
             "mp3" => FileType::MP3,
             "flac" => FileType::FLAC,
+            "wav" => FileType::WAV,
             _ => FileType::Unknown,
         };
 
@@ -127,6 +126,8 @@ impl File {
         &mut self,
         new_path: &str,
     ) -> Result<()> {
+        // TODO: opus metadata
+
         // metaflac: vorbis comments are stored internally as hashmap, but API doesn't
         // let you get them in any way --
         // https://jameshurst.github.io/rust-metaflac/metaflac/block/struct.VorbisComment.html
@@ -154,6 +155,7 @@ impl File {
             (TagField::Genre, "GENRE"),
         ] {
             if let Some(val) = comments.get(com) {
+                // TODO: genre should be titlecase
                 self.set(tag, val);
             }
         }
@@ -234,13 +236,13 @@ impl File {
     /// - Extract tags as id3 (if present)
     /// - Transcode to mp3
     /// - Write id3 tags to new mp3 file
-    fn transcode(&mut self) -> Result<()> {
+    fn transcode(&mut self) -> Result<TranscodeResult> {
         if let FileType::MP3 = self.file_type
         // // requires nightly
         //     && self.bitrate()? < 320
         {
             if self.bitrate()? < 320 {
-                return Ok(());
+                return Ok(TranscodeResult::NotNeeded);
             }
         }
 
@@ -256,6 +258,16 @@ impl File {
         let outfile = format!("{}.mp3", self.path);
 
         match self.file_type {
+            FileType::MP3 => {
+                // lame preserves metadata automatically
+                Command::new("lame")
+                    .arg(&self.path)
+                    .args("--silent -V 0".split_whitespace())
+                    .arg(&outfile)
+                    .spawn()?
+                    .wait()?;
+            }
+
             FileType::FLAC => {
                 let flac = Command::new("flac")
                     .arg(&self.path)
@@ -270,18 +282,19 @@ impl File {
                     .stdin(Stdio::from(flac.stdout.context("no flac stdout")?))
                     .spawn()?;
                 lame.wait()?;
+                self.copy_flac_tags(&outfile)?;
             }
+            FileType::Unknown => return Ok(TranscodeResult::Unrecognized),
 
             // "ffmpeg -y -i";
             // "lame --silent {BITRATE_ARG} --disptime 1";
             _ => unimplemented!(),
         };
 
-        self.copy_flac_tags(&outfile)?;
         fs::remove_file(&self.path)?;
         self.path = outfile;
 
-        Ok(())
+        Ok(TranscodeResult::Success)
     }
 }
 
@@ -330,11 +343,24 @@ impl SourceDir {
 
     pub fn dirs(&self) -> Vec<DirEntry> { self.dir.sort(false) }
 
-    // TODO: log errors; File.transcode must first return some custom error type
-    pub fn transcode(&self) -> Result<()> {
-        for f in self.files().iter_mut() {
-            f.transcode()?;
+    // TODO: log errors
+    pub fn transcode_all(&self) -> Result<()> {
+        for e in WalkDir::new(&self.path)
+            .sort_by(|a, b| a.file_name().cmp(b.file_name()))
+            .into_iter()
+            .filter_map(|f| f.ok())
+            .filter(|f| f.path().is_file())
+        {
+            let f = File::new(e.as_str());
+            match f {
+                Err(_) => println!("err: {e:?}"),
+                Ok(mut f) => {
+                    println!("converting: {e:?}");
+                    f.transcode().unwrap();
+                }
+            }
         }
+
         Ok(())
     }
 }
