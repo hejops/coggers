@@ -1,6 +1,7 @@
 //! Transcoding and preservation of metadata across formats
 
 use std::fmt::Display;
+use std::fs;
 use std::iter::zip;
 use std::process::Command;
 use std::process::Stdio;
@@ -139,8 +140,10 @@ impl File {
         let flacfile = lofty::flac::FlacFile::read_from(&mut buf, ParseOptions::default())?;
         let comments = flacfile.vorbis_comments().context("no vorbis comments")?;
 
+        // TODO: can this be turned into a match statement for exhaustiveness?
         for (tag, com) in [
-            // 2nd value should be [&str], probably
+            // 2nd value should be [&str], probably, to cover multiple possible field names, e.g.
+            // 'DATE'/'YEAR'
             (TagField::Title, "TITLE"),
             (TagField::TrackNumber, "TRACKNUMBER"),
             (TagField::Artist, "ARTIST"),
@@ -253,7 +256,7 @@ impl File {
         };
 
         self.copy_flac_tags(&outfile)?;
-        // TODO: remove self.path
+        fs::remove_file(&self.path)?;
         self.path = outfile;
 
         Ok(())
