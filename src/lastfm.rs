@@ -3,6 +3,7 @@
 // https://github.com/eliben/code-for-blog/blob/master/2021/rust-bst/src/nodehandle.rs
 
 use std::env;
+use std::fmt::Display;
 
 use lazy_static::lazy_static;
 use serde::Deserialize;
@@ -28,7 +29,7 @@ lazy_static! {
 }
 
 #[derive(Debug)]
-struct Edge((usize, usize));
+struct Edge(usize, usize);
 
 #[derive(Debug)]
 pub struct ArtistTree {
@@ -67,7 +68,8 @@ impl ArtistTree {
                     continue;
                 }
 
-                let mut new = vec![]; // self.nodes is mutable in this block...
+                let mut new_nodes = vec![]; // self.nodes is mutable in this block...
+                let mut new_edges = vec![];
 
                 // println!("{}", parent.name);
                 for c in parent
@@ -76,13 +78,34 @@ impl ArtistTree {
                     .filter(|c| c.sim_gt(0.6) && !self.contains(c))
                 {
                     // ...but immutable in this one
-                    new.push(c.clone());
+                    new_nodes.push(c.clone());
+
+                    let n1 = self.nodes.iter().position(|n| *n == parent).unwrap();
+                    let n2 = new_nodes.iter().position(|n| n == c).unwrap() + self.nodes.len();
+
+                    new_edges.push(Edge(n1, n2));
                 }
 
-                self.nodes.extend(new);
+                self.nodes.extend(new_nodes);
+                self.edges.extend(new_edges);
             }
-            println!("{} {}", i, self.nodes.len());
+            // println!("{} {}", i, self.nodes.len());
         }
+    }
+}
+
+impl Display for ArtistTree {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        for edge in self.edges.iter() {
+            let Edge(n1, n2) = edge;
+            let a1 = &self.nodes.get(*n1).unwrap().name;
+            let a2 = &self.nodes.get(*n2).unwrap().name;
+            writeln!(f, "{} -> {}", a1, a2)?;
+        }
+        Ok(())
     }
 }
 
