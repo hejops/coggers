@@ -9,6 +9,7 @@ use std::process::Stdio;
 use anyhow::Context;
 use anyhow::Result;
 use id3::TagLike;
+use itertools::Itertools;
 use lofty::AudioFile;
 use lofty::ParseOptions;
 use ratatui::widgets::ListItem;
@@ -140,6 +141,8 @@ impl File {
         let flacfile = lofty::flac::FlacFile::read_from(&mut buf, ParseOptions::default())?;
         let comments = flacfile.vorbis_comments().context("no vorbis comments")?;
 
+        println!("{:?}", comments);
+
         // TODO: can this be turned into a match statement for exhaustiveness?
         for (tag, com) in [
             // 2nd value should be [&str], probably, to cover multiple possible field names, e.g.
@@ -188,9 +191,24 @@ impl File {
             TagField::Title => self.tags.set_title(value),
             TagField::Artist => self.tags.set_artist(value),
             TagField::Album => self.tags.set_album(value),
-            TagField::Year => self.tags.set_year(value.parse().unwrap()),
-            TagField::TrackNumber => self.tags.set_track(value.parse().unwrap()),
             TagField::Genre => self.tags.set_genre(value),
+
+            // why is year i32? no idea
+            TagField::Year => match value.parse::<i32>() {
+                Ok(parsed) => self.tags.set_year(parsed),
+                Err(_) => {
+                    println!("invalid year: {}", value);
+                    self.tags.set_track(0);
+                }
+            },
+
+            TagField::TrackNumber => match value.parse::<u32>() {
+                Ok(parsed) => self.tags.set_track(parsed),
+                Err(_) => {
+                    println!("invalid tracknumber: {}", value);
+                    self.tags.set_track(0);
+                }
+            },
         }
     }
 
@@ -293,17 +311,27 @@ impl SourceDir {
         })
     }
 
-    pub fn tags(&self) -> Vec<File> {
+    pub fn files(&self) -> Vec<File> {
         self.dir
             .sort(true)
             .iter()
             .map(|f| f.as_str())
+            // .walk()
+            // .map(|f| f.as_str())
+            // .sorted()
             .map(File::new)
             .filter_map(|p| p.ok())
             .collect()
     }
 
     pub fn dirs(&self) -> Vec<DirEntry> { self.dir.sort(false) }
+
+    pub fn transcode(&self) -> Result<()> {
+        for f in self.files().iter_mut() {
+            f.transcode()?;
+        }
+        Ok(())
+    }
 }
 
 // should probably be used as the return type for matches_discogs (instead of
@@ -324,7 +352,7 @@ impl SourceDir {
     ///   if `None` can be returned
     /// - durations are returned in milliseconds, so we convert to seconds
     pub fn durations(&self) -> Vec<Option<u32>> {
-        self.tags()
+        self.files()
             .iter()
             // warning: duration may be inaccurate if not properly encoded
             .map(|t| t.tags.duration()) //.unwrap_or(0))
@@ -336,7 +364,7 @@ impl SourceDir {
         &self,
         rel: &Release,
     ) -> bool {
-        if self.tags().len() != rel.tracklist().len() {
+        if self.files().len() != rel.tracklist().len() {
             return false;
         }
 
@@ -352,7 +380,7 @@ impl SourceDir {
         &mut self,
         rel: &Release,
     ) -> Result<()> {
-        for (discogs_track, file) in rel.tracklist().iter().zip(&mut self.tags()) {
+        for (discogs_track, file) in rel.tracklist().iter().zip(&mut self.files()) {
             // println!("{}\n{}", discogs_track, file);
 
             // println!("{}\n{:?}", discogs_track.title, file.get(TagField::Title));
