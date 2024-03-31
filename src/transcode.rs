@@ -9,7 +9,6 @@ use std::process::Stdio;
 use anyhow::Context;
 use anyhow::Result;
 use id3::TagLike;
-use itertools::Itertools;
 use lofty::AudioFile;
 use lofty::ParseOptions;
 use ratatui::widgets::ListItem;
@@ -212,6 +211,22 @@ impl File {
         }
     }
 
+    fn bitrate(&self) -> Result<u32> {
+        // TLEN should not be relied on
+        // let dur = self.tags.duration().unwrap();
+
+        // // interestingly, kbps calculation is not as simple as kb / secs;
+        // the result // must be multiplied by about 8
+        // let mp3dur = newfile.properties().duration().as_secs();
+        // let size = fs::metadata(&self.path)?.size() / 1024;
+        // let kbps = size / mp3dur * 8;
+        // println!("{} {} {}", mp3dur, size, kbps);
+
+        let mut buf = std::fs::File::open(&self.path)?;
+        let newfile = lofty::mpeg::MpegFile::read_from(&mut buf, ParseOptions::default())?;
+        Ok(newfile.properties().audio_bitrate())
+    }
+
     /// The target encoding is always MP3 V0 (for now). Shell commands are used
     /// because I haven't found a crate that does lossy transcoding at a low
     /// level.
@@ -219,25 +234,14 @@ impl File {
     /// - Extract tags as id3 (if present)
     /// - Transcode to mp3
     /// - Write id3 tags to new mp3 file
-    pub fn transcode(&mut self) -> Result<()> {
-        // TODO: check bitrate
-        if let FileType::MP3 = self.file_type {
-            // let buf = std::fs::File::open(&self.path)?;
-
-            // reading entire streams is impractical
-
-            // let f = puremp3::Mp3Decoder::new(buf)
-            //     .frames()
-            //     .last()
-            //     .unwrap()
-            //     .num_samples;
-            // println!("{}", f); // 20 s / 2.3 MB
-
-            // let (_, stream) = puremp3::read_mp3(buf).unwrap();
-            // println!("{}", stream.count()); // 20 s / 2.3 MB
-
-            // panic!();
-            return Ok(());
+    fn transcode(&mut self) -> Result<()> {
+        if let FileType::MP3 = self.file_type
+        // // requires nightly
+        //     && self.bitrate()? < 320
+        {
+            if self.bitrate()? < 320 {
+                return Ok(());
+            }
         }
 
         // "lame --silent -V 0 --disptime 1";
@@ -259,7 +263,7 @@ impl File {
                     .stdout(Stdio::piped())
                     .spawn()?;
                 let mut lame = Command::new("lame")
-                    .args("-V 0 -".split_whitespace())
+                    .args("--silent -V 0 -".split_whitespace())
                     // if you decide to collect the output bytes and write the buffer yourself,
                     // the new file will have incorrect duration
                     .arg(&outfile)
@@ -326,6 +330,7 @@ impl SourceDir {
 
     pub fn dirs(&self) -> Vec<DirEntry> { self.dir.sort(false) }
 
+    // TODO: log errors; File.transcode must first return some custom error type
     pub fn transcode(&self) -> Result<()> {
         for f in self.files().iter_mut() {
             f.transcode()?;
