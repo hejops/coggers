@@ -34,39 +34,6 @@ pub enum FileType {
     Unknown,
 }
 
-impl Walk for DirEntry {
-    fn walk(&self) -> impl Iterator<Item = DirEntry> {
-        WalkDir::new(self.path())
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
-    }
-    /// UTF-8 errors are ignored
-    fn as_str(&self) -> &str { self.path().to_str().unwrap() }
-    fn as_dir(&self) -> DirEntry { self.clone() }
-    /// basename
-    fn as_list_item(&self) -> ListItem {
-        // ListItem::new(self.as_str()) // fullpath
-        // TODO: color based on filetype
-        ListItem::new(self.path().file_name().unwrap().to_str().unwrap())
-    }
-}
-
-/// Wrapper over `id3::Tag`. It is important to note that metadata can be read
-/// and stored completely separately from the audio file. Implements some
-/// transcoding methods for convenience.
-#[derive(Debug)]
-pub struct File {
-    pub path: String,
-
-    pub file_type: FileType,
-
-    /// To avoid the need for an adapter over different audio formats and tag
-    /// containers (and since I always transcode into MP3), we default to
-    /// `id3`. Under the hood, other crates like `lofty` are used.
-    pub tags: id3::Tag,
-}
-
 /// Used in `Track` and `File`
 #[derive(Debug)]
 pub enum TagField {
@@ -85,6 +52,21 @@ pub enum TranscodeResult {
     NotNeeded,
     Unrecognized,
     Failure,
+}
+
+/// Wrapper over `id3::Tag`. It is important to note that metadata can be read
+/// and stored completely separately from the audio file. Implements some
+/// transcoding methods for convenience.
+#[derive(Debug)]
+pub struct File {
+    pub path: String,
+
+    pub file_type: FileType,
+
+    /// To avoid the need for an adapter over different audio formats and tag
+    /// containers (and since I always transcode into MP3), we default to
+    /// `id3`. Under the hood, other crates like `lofty` are used.
+    pub tags: id3::Tag,
 }
 
 // #[derive(Debug)]
@@ -316,6 +298,25 @@ pub struct SourceDir {
     pub path: String,
     pub dir: DirEntry,
 }
+
+impl Walk for DirEntry {
+    fn walk(&self) -> impl Iterator<Item = DirEntry> {
+        WalkDir::new(self.path())
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+    }
+    /// UTF-8 errors are ignored
+    fn as_str(&self) -> &str { self.path().to_str().unwrap() }
+    fn as_dir(&self) -> DirEntry { self.clone() }
+    /// basename
+    fn as_list_item(&self) -> ListItem {
+        // ListItem::new(self.as_str()) // fullpath
+        // TODO: color based on filetype
+        ListItem::new(self.path().file_name().unwrap().to_str().unwrap())
+    }
+}
+
 impl SourceDir {
     pub fn new(path: &str) -> Result<Self> {
         let dir = WalkDir::new(path)
@@ -327,6 +328,8 @@ impl SourceDir {
             dir,
         })
     }
+
+    pub fn dirs(&self) -> Vec<DirEntry> { self.dir.sort(false) }
 
     pub fn files(&self) -> Vec<File> {
         self.dir
@@ -340,8 +343,6 @@ impl SourceDir {
             .filter_map(|p| p.ok())
             .collect()
     }
-
-    pub fn dirs(&self) -> Vec<DirEntry> { self.dir.sort(false) }
 
     // TODO: log errors
     pub fn transcode_all(&self) -> Result<()> {
@@ -363,20 +364,7 @@ impl SourceDir {
 
         Ok(())
     }
-}
 
-// should probably be used as the return type for matches_discogs (instead of
-// bool), so that we can decide how to handle parse errors
-pub enum ParseError {
-    /// Generally unrecoverable
-    UnequalLen,
-
-    /// Can usually be ignored
-    UnequalDur,
-    BadTags,
-}
-
-impl SourceDir {
     /// Some quirks:
     ///
     /// - `TagLike::duration()` may return `Some(0)`, for some reason; not sure
@@ -390,7 +378,19 @@ impl SourceDir {
             .map(|d| d.map(|d| d / 1000)) // Option.map in Iterator.map is wild
             .collect()
     }
+}
 
+// should probably be used as the return type for matches_discogs (instead of
+// bool), so that we can decide how to handle parse errors
+pub enum DiscogsParseError {
+    /// Generally unrecoverable
+    UnequalLen,
+    /// Can usually be ignored
+    UnequalDur,
+    BadTags,
+}
+
+impl SourceDir {
     pub fn matches_discogs(
         &self,
         rel: &Release,
