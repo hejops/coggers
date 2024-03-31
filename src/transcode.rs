@@ -1,8 +1,6 @@
 //! Transcoding and preservation of metadata across formats
 
 use std::fmt::Display;
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::iter::zip;
 use std::process::Command;
 use std::process::Stdio;
@@ -93,6 +91,7 @@ pub enum TagField {
     Year,
     Title,
     TrackNumber,
+    Genre,
 }
 
 impl File {
@@ -109,57 +108,53 @@ impl File {
         };
 
         // init with empty tags, so we can use File.get for convenience
-        let mut f = Self {
+        let f = Self {
             path: path.to_string(),
             file_type,
-            tags: id3::Tag::new(),
-        };
-
-        match id3::Tag::read_from_path(path) {
-            Ok(tags) => f.tags = tags,
-            Err(_) => {
-                // parse flac tags and cast them into id3; after conversion into mp3, they can
-                // be set
-
-                // metaflac: vorbis comments are stored internally as hashmap, but API doesn't
-                // let you get them in any way --
-                // https://jameshurst.github.io/rust-metaflac/metaflac/block/struct.VorbisComment.html
-
-                // // symphonia_metadata requires a MetadataBuilder (whatever that is)
-                // symphonia_metadata::flac::read_comment_block(reader, metadata);
-                // symphonia_metadata::id3v2::read_id3v2(reader, metadata);
-
-                // lofty is probably the cleanest way to do it
-
-                let mut buf = std::fs::File::open(path).unwrap();
-                let flacfile = lofty::flac::FlacFile::read_from(&mut buf, ParseOptions::default())?;
-                let comments = flacfile.vorbis_comments().unwrap();
-
-                // println!("{:?}", comments);
-
-                for (tag, com) in [
-                    // 2nd value should be [&str], probably
-                    (TagField::Title, "TITLE"),
-                    (TagField::TrackNumber, "TRACKNUMBER"),
-                    (TagField::Artist, "ARTIST"),
-                    (TagField::Album, "ALBUM"),
-                    (TagField::Year, "DATE"),
-                ] {
-                    if let Some(val) = comments.get(com) {
-                        f.set(tag, val);
-                    }
+            tags: {
+                match id3::Tag::read_from_path(path) {
+                    Ok(tags) => tags,
+                    _ => id3::Tag::new(),
                 }
-
-                // println!("{:#?}", f.tags);
-
-                // // nothing to save yet
-                // f.tags.write_to_path(path, id3::Version::Id3v24)?;
-
-                f.transcode()?;
-            }
+            },
         };
 
         Ok(f)
+    }
+
+    fn copy_flac_tags(
+        &mut self,
+        new_path: &str,
+    ) -> Result<()> {
+        // metaflac: vorbis comments are stored internally as hashmap, but API doesn't
+        // let you get them in any way --
+        // https://jameshurst.github.io/rust-metaflac/metaflac/block/struct.VorbisComment.html
+
+        // // symphonia_metadata requires a MetadataBuilder (whatever that is)
+        // symphonia_metadata::flac::read_comment_block(reader, metadata);
+        // symphonia_metadata::id3v2::read_id3v2(reader, metadata);
+
+        // lofty is probably the cleanest way to do it
+        let mut buf = std::fs::File::open(&self.path)?;
+        let flacfile = lofty::flac::FlacFile::read_from(&mut buf, ParseOptions::default())?;
+        let comments = flacfile.vorbis_comments().context("no vorbis comments")?;
+
+        for (tag, com) in [
+            // 2nd value should be [&str], probably
+            (TagField::Title, "TITLE"),
+            (TagField::TrackNumber, "TRACKNUMBER"),
+            (TagField::Artist, "ARTIST"),
+            (TagField::Album, "ALBUM"),
+            (TagField::Year, "DATE"),
+        ] {
+            if let Some(val) = comments.get(com) {
+                self.set(tag, val);
+            }
+        }
+
+        self.tags.write_to_path(new_path, id3::Version::Id3v24)?;
+
+        Ok(())
     }
 
     pub fn get(
@@ -173,6 +168,7 @@ impl File {
             TagField::Title => self.tags.title().map(|f| f.to_string()),
             TagField::Year => self.tags.year().map(|f| f.to_string()),
             TagField::TrackNumber => self.tags.track().map(|f| f.to_string()),
+            TagField::Genre => self.tags.genre_parsed().map(|f| f.to_string()),
             // _ => None,
         }
         // .map(|f| f.to_string())
@@ -190,10 +186,38 @@ impl File {
             TagField::Album => self.tags.set_album(value),
             TagField::Year => self.tags.set_year(value.parse().unwrap()),
             TagField::TrackNumber => self.tags.set_track(value.parse().unwrap()),
+            TagField::Genre => self.tags.set_genre(value),
         }
     }
 
-    pub fn transcode(&self) -> Result<()> {
+    /// The target encoding is always MP3 V0 (for now). Shell commands are used
+    /// because I haven't found a crate that does lossy transcoding at a low
+    /// level.
+    ///
+    /// - Extract tags as id3 (if present)
+    /// - Transcode to mp3
+    /// - Write id3 tags to new mp3 file
+    pub fn transcode(&mut self) -> Result<()> {
+        // TODO: check bitrate
+        if let FileType::MP3 = self.file_type {
+            // let buf = std::fs::File::open(&self.path)?;
+
+            // reading entire streams is impractical
+
+            // let f = puremp3::Mp3Decoder::new(buf)
+            //     .frames()
+            //     .last()
+            //     .unwrap()
+            //     .num_samples;
+            // println!("{}", f); // 20 s / 2.3 MB
+
+            // let (_, stream) = puremp3::read_mp3(buf).unwrap();
+            // println!("{}", stream.count()); // 20 s / 2.3 MB
+
+            // panic!();
+            return Ok(());
+        }
+
         // "lame --silent -V 0 --disptime 1";
 
         // https://doc.rust-lang.org/std/process/index.html#handling-io
@@ -201,25 +225,35 @@ impl File {
         // "flac in.flac --decode --stdout --totally-silent |
         // lame --silent -V 0 - out.mp3"
 
-        let flac = Command::new("flac")
-            .arg(&self.path)
-            .args("--decode --stdout --totally-silent".split_whitespace())
-            .stdout(Stdio::piped())
-            .spawn()?;
-        let lame = Command::new("lame")
-            .args("--silent -V 0 -".split_whitespace())
-            .stdin(Stdio::from(flac.stdout.context("no flac stdout")?))
-            .stdout(Stdio::piped())
-            .spawn()?;
-        let output = lame.wait_with_output()?.stdout;
-        let mut buf = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .open("foo.mp3")?;
-        buf.write_all(&output)?;
+        // println!("{:#?}", f.tags);
 
-        // "ffmpeg -y -i";
-        // "lame --silent {BITRATE_ARG} --disptime 1";
+        let outfile = format!("{}.mp3", self.path);
+
+        match self.file_type {
+            FileType::FLAC => {
+                let flac = Command::new("flac")
+                    .arg(&self.path)
+                    .args("--decode --stdout --totally-silent".split_whitespace())
+                    .stdout(Stdio::piped())
+                    .spawn()?;
+                let mut lame = Command::new("lame")
+                    .args("-V 0 -".split_whitespace())
+                    // if you decide to collect the output bytes and write the buffer yourself,
+                    // the new file will have incorrect duration
+                    .arg(&outfile)
+                    .stdin(Stdio::from(flac.stdout.context("no flac stdout")?))
+                    .spawn()?;
+                lame.wait()?;
+            }
+
+            // "ffmpeg -y -i";
+            // "lame --silent {BITRATE_ARG} --disptime 1";
+            _ => unimplemented!(),
+        };
+
+        self.copy_flac_tags(&outfile)?;
+        // TODO: remove self.path
+        self.path = outfile;
 
         Ok(())
     }
@@ -288,6 +322,7 @@ impl SourceDir {
     pub fn durations(&self) -> Vec<Option<u32>> {
         self.tags()
             .iter()
+            // warning: duration may be inaccurate if not properly encoded
             .map(|t| t.tags.duration()) //.unwrap_or(0))
             .map(|d| d.map(|d| d / 1000)) // Option.map in Iterator.map is wild
             .collect()
@@ -336,3 +371,30 @@ impl SourceDir {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //{{{
+
+    use lofty::AudioFile;
+    use lofty::ParseOptions;
+
+    use crate::transcode::File;
+
+    fn test_duration() {
+        let infile = "foo.flac";
+        let outfile = "foo.flac.mp3";
+
+        File::new(infile).unwrap().transcode().unwrap();
+
+        let mut buf = std::fs::File::open(infile).unwrap();
+        let flacfile = lofty::flac::FlacFile::read_from(&mut buf, ParseOptions::default()).unwrap();
+        let flacdur = flacfile.properties().duration().as_secs();
+
+        let mut buf = std::fs::File::open(outfile).unwrap();
+        let newfile = lofty::mpeg::MpegFile::read_from(&mut buf, ParseOptions::default()).unwrap();
+        let mp3dur = newfile.properties().duration().as_secs();
+
+        assert_eq!(flacdur, mp3dur);
+    }
+} //}}}
