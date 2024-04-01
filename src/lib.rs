@@ -1,4 +1,4 @@
-pub mod blah;
+pub mod cli;
 pub mod collection;
 pub mod http;
 pub mod io;
