@@ -1,7 +1,8 @@
-//! Written as an exercise to implement tree/graph-like structures
+//! Written as an exercise to use basic tree structures for music discovery.
 
 // https://github.com/eliben/code-for-blog/blob/master/2021/rust-bst/src/nodehandle.rs
 
+use std::collections::HashSet;
 use std::env;
 use std::fmt::Display;
 
@@ -9,48 +10,33 @@ use lazy_static::lazy_static;
 use serde::Deserialize;
 use serde_json::Value;
 
-// from a given artist (root node), construct a tree of artists, limiting to
-// similarity value above 0.5. at each branch, similarity value is multiplied
-// with that of the parent node
-
-// response:
-// {'similarartists': {'artist': [...]},
-//                     '@attr': {'name': foo}}
-//
-// desired struct:
-// {'similarartists': [...],
-//  'name': foo}
-//
-//  i.e.: bring 'name' 2 levels up, bring 'artist' 1 level up
-
 lazy_static! {
     pub static ref LASTFM_KEY: String =
         env::var("LASTFM_KEY").expect("Environment variable $LASTFM_KEY must be set");
 }
 
 #[derive(Debug)]
-struct Edge(usize, usize);
+pub struct Edge(String, String, f64);
 
 #[derive(Debug)]
 pub struct ArtistTree {
-    root: SimilarArtist,
-    pub nodes: Vec<SimilarArtist>,
-    edges: Vec<Edge>,
+    root: String,
+    pub edges: Vec<Edge>,
 }
 
 impl ArtistTree {
-    pub fn new(root: SimilarArtist) -> Self {
-        let nodes = vec![root.clone()];
+    pub fn new(root: &str) -> Self {
+        let root = root.to_string();
         let edges = vec![];
-        Self { root, nodes, edges }
+        Self { root, edges }
     }
 
-    fn contains(
-        &self,
-        artist: &SimilarArtist,
-    ) -> bool {
-        self.nodes.iter().any(|a| a.eq(artist))
-    }
+    // fn contains(
+    //     &self,
+    //     artist: &SimilarArtist,
+    // ) -> bool {
+    //     self.nodes.iter().any(|a| a.eq(artist))
+    // }
 
     pub fn build(&mut self) {
         let maxdepth = 1;
@@ -63,35 +49,26 @@ impl ArtistTree {
             // TODO: consider wrapping Vec in RefCell to allow interior mutability?
             // https://stackoverflow.com/a/30967250
 
-            for parent in self.nodes.clone() {
-                if i > 1 && self.contains(&parent) {
-                    continue;
+            let ch = match i {
+                0 => get_children(&self.root),
+                _ => {
+                    let parents: HashSet<_> =
+                        HashSet::from_iter(self.edges.iter().map(|e| e.0.as_str()));
+
+                    // all children
+                    HashSet::from_iter(self.edges.iter().map(|e| e.1.as_str()))
+                        // minus parents
+                        .difference(&parents)
+                        .collect::<HashSet<_>>()
+                        .iter()
+                        .flat_map(|p| get_children(p))
+                        .collect::<Vec<Edge>>()
                 }
-
-                let mut new_nodes = vec![]; // self.nodes is mutable in this block...
-                let mut new_edges = vec![];
-
-                // println!("{}", parent.name);
-                for c in parent
-                    .get_similar()
-                    .iter()
-                    .filter(|c| c.sim_gt(0.6) && !self.contains(c))
-                {
-                    // ...but immutable in this one
-                    new_nodes.push(c.clone());
-
-                    let n1 = self.nodes.iter().position(|n| *n == parent).unwrap();
-                    let n2 = new_nodes.iter().position(|n| n == c).unwrap() + self.nodes.len();
-
-                    new_edges.push(Edge(n1, n2));
-                }
-
-                self.nodes.extend(new_nodes);
-                self.edges.extend(new_edges);
-            }
-            // println!("{} {}", i, self.nodes.len());
+            };
+            self.edges.extend(ch);
         }
     }
+    // https://depth-first.com/articles/2020/02/03/graphs-in-rust-an-introduction-to-petgraph/
 }
 
 impl Display for ArtistTree {
@@ -100,10 +77,10 @@ impl Display for ArtistTree {
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
         for edge in self.edges.iter() {
-            let Edge(n1, n2) = edge;
-            let a1 = &self.nodes.get(*n1).unwrap().name;
-            let a2 = &self.nodes.get(*n2).unwrap().name;
-            writeln!(f, "{} -> {}", a1, a2)?;
+            let Edge(n1, n2, _sim) = edge;
+            // let a1 = &self.nodes.get(*n1).unwrap().name;
+            // let a2 = &self.nodes.get(*n2).unwrap().name;
+            writeln!(f, "{} -> {}", n1, n2)?;
         }
         Ok(())
     }
@@ -127,7 +104,7 @@ impl PartialEq for SimilarArtist {
 }
 
 impl SimilarArtist {
-    pub fn new(name: &str) -> Self {
+    fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
             similarity: "1.0".to_string(),
@@ -161,19 +138,28 @@ impl SimilarArtist {
     }
 }
 
-// 200 LOC for a struct with 2 fields is crazy...
-// https://serde.rs/deserialize-struct.html
+pub fn get_children(parent: &str) -> Vec<Edge> {
+    let mut new_edges = vec![];
+    for c in SimilarArtist::new(parent)
+        .get_similar()
+        .into_iter()
+        .filter(|c| c.sim_gt(0.7))
+    {
+        new_edges.push(Edge(
+            parent.to_string(),
+            c.name,
+            c.similarity.parse().unwrap(),
+        ));
+    }
+    new_edges
+}
 
-// // https://stackoverflow.com/a/75684771
-// // https://github.com/serde-rs/serde/issues/868#issuecomment-520511656
-// fn extract_object_generic<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-// where
-//     D: serde::de::Deserializer<'de>,
-//     T: Deserialize<'de>,
-// {
-//     #[derive(Deserialize)]
-//     struct Container<T> {
-//         object: T,
-//     }
-//     Container::deserialize(deserializer).map(|a| a.object)
-// }
+impl Display for SimilarArtist {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        write!(f, "{}", self.name)?;
+        Ok(())
+    }
+}
