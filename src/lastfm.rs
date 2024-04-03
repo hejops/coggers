@@ -41,16 +41,8 @@ impl ArtistTree {
     pub fn build(&mut self) {
         let maxdepth = 1;
         for i in 0..=maxdepth {
-            // we want to extend self.nodes while iterating through it. without using
-            // container types like RefCell, two 'naive' options appear viable:
-            // self.nodes.clone().into_iter(), or self.nodes.iter(). for memory
-            // safety, the latter is disallowed by the borrow checker.
-            //
-            // TODO: consider wrapping Vec in RefCell to allow interior mutability?
-            // https://stackoverflow.com/a/30967250
-
             let ch = match i {
-                0 => get_children(&self.root),
+                0 => SimilarArtist::new(&self.root).get_edges(),
                 _ => {
                     let parents: HashSet<_> =
                         HashSet::from_iter(self.edges.iter().map(|e| e.0.as_str()));
@@ -61,7 +53,8 @@ impl ArtistTree {
                         .difference(&parents)
                         .collect::<HashSet<_>>()
                         .iter()
-                        .flat_map(|p| get_children(p))
+                        // .flat_map(|p| get_children(p))
+                        .flat_map(|p| SimilarArtist::new(p).get_edges())
                         .collect::<Vec<Edge>>()
                 }
             };
@@ -86,7 +79,8 @@ impl Display for ArtistTree {
     }
 }
 
-#[derive(Deserialize, Debug, Clone)]
+/// This struct is quite poorly implemented
+#[derive(Deserialize, Debug)]
 pub struct SimilarArtist {
     pub name: String,
     /// Preserved as `String`, in order to be able to implement `Eq`
@@ -111,15 +105,14 @@ impl SimilarArtist {
         }
     }
 
-    pub fn sim_gt(
+    fn sim_gt(
         &self,
         x: f64,
     ) -> bool {
         self.similarity.parse::<f64>().unwrap() > x
     }
 
-    /// Get 1-level children of the node
-    pub fn get_similar(&self) -> Vec<SimilarArtist> {
+    fn get_similar(&self) -> Vec<SimilarArtist> {
         let url = format!(
             "http://ws.audioscrobbler.com/2.0/?method=artist.getsimilar&artist={}&api_key={}&format=json", 
             self.name,
@@ -136,22 +129,15 @@ impl SimilarArtist {
             .unwrap();
         serde_json::from_value(sim.clone()).unwrap()
     }
-}
 
-pub fn get_children(parent: &str) -> Vec<Edge> {
-    let mut new_edges = vec![];
-    for c in SimilarArtist::new(parent)
-        .get_similar()
-        .into_iter()
-        .filter(|c| c.sim_gt(0.7))
-    {
-        new_edges.push(Edge(
-            parent.to_string(),
-            c.name,
-            c.similarity.parse().unwrap(),
-        ));
+    /// Get 1-level children of the node
+    fn get_edges(&self) -> Vec<Edge> {
+        self.get_similar()
+            .into_iter()
+            .filter(|c| c.sim_gt(0.7))
+            .map(|c| Edge(self.name.to_string(), c.name, c.similarity.parse().unwrap()))
+            .collect()
     }
-    new_edges
 }
 
 impl Display for SimilarArtist {
