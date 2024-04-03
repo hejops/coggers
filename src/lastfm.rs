@@ -1,12 +1,13 @@
 //! Written as an exercise to use basic tree structures for music discovery.
 
 // https://github.com/eliben/code-for-blog/blob/master/2021/rust-bst/src/nodehandle.rs
-
 use std::collections::HashSet;
 use std::env;
 use std::fmt::Display;
 
 use lazy_static::lazy_static;
+use petgraph::dot::Dot;
+use petgraph::graph::Graph;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -61,7 +62,37 @@ impl ArtistTree {
             self.edges.extend(ch);
         }
     }
-    // https://depth-first.com/articles/2020/02/03/graphs-in-rust-an-introduction-to-petgraph/
+
+    pub fn as_graph(&self) -> Graph<&str, f64> {
+        // https://depth-first.com/articles/2020/02/03/graphs-in-rust-an-introduction-to-petgraph/
+        let mut graph = Graph::new();
+        for edge in self.edges.iter() {
+            let Edge(parent, child, sim) = edge;
+
+            // // naive add; leads to node duplication
+            // let n1 = graph.add_node(parent.as_str());
+            // let n2 = graph.add_node(child.as_str());
+
+            // instead, we should check the graph if either node already exists; if it does,
+            // use its NodeIndex
+            let n1 = match graph.node_indices().find(|i| graph[*i] == parent) {
+                Some(node) => node,
+                None => graph.add_node(parent.as_str()),
+            };
+
+            let n2 = match graph.node_indices().find(|i| graph[*i] == child) {
+                Some(node) => node,
+                None => graph.add_node(child.as_str()),
+            };
+
+            graph.add_edge(n1, n2, *sim);
+        }
+
+        // let dot = Dot::new(&graph);
+        // println!("{}", dot);
+
+        graph
+    }
 }
 
 impl Display for ArtistTree {
@@ -121,6 +152,10 @@ impl SimilarArtist {
 
         let resp = reqwest::blocking::get(url).unwrap().text().unwrap();
         let raw_json: Value = serde_json::from_str(&resp).unwrap();
+
+        if raw_json.get("similarartists").is_none() {
+            return vec![];
+        }
 
         let sim = raw_json
             .get("similarartists")
