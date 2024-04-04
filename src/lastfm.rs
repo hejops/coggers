@@ -17,7 +17,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 lazy_static! {
-    pub static ref LASTFM_KEY: String =
+    static ref LASTFM_KEY: String =
         env::var("LASTFM_KEY").expect("Environment variable $LASTFM_KEY must be set");
 }
 
@@ -25,9 +25,11 @@ lazy_static! {
 pub struct Edge(String, String, f64);
 
 #[derive(Debug)]
+/// This should be implemented as a tree, because graphs will usually produce
+/// many uninteresting cycles.
 pub struct ArtistTree {
     root: String,
-    pub edges: Vec<Edge>,
+    edges: Vec<Edge>,
 
     /// Default: 0.7
     threshold: f64,
@@ -50,7 +52,7 @@ impl ArtistTree {
         }
     }
 
-    pub fn with_threshold(
+    fn with_threshold(
         mut self,
         new: f64,
     ) -> Self {
@@ -58,20 +60,13 @@ impl ArtistTree {
         self
     }
 
-    pub fn with_depth(
+    fn with_depth(
         mut self,
         new: u8,
     ) -> Self {
         self.depth = new;
         self
     }
-
-    // fn contains(
-    //     &self,
-    //     artist: &SimilarArtist,
-    // ) -> bool {
-    //     self.nodes.iter().any(|a| a.eq(artist))
-    // }
 
     pub fn build(&mut self) {
         for i in 0..=self.depth {
@@ -88,7 +83,8 @@ impl ArtistTree {
                         .difference(&parents)
                         .collect::<HashSet<_>>()
                         .iter()
-                        // damn is this ugly
+                        // damn is this ugly; i should really switch from Vec<Edge> to Graph
+                        // directly
                         .map(|p| SimilarArtist::new(p).get_edges(self.threshold))
                         .filter(|e| e.is_some())
                         .flat_map(|e| e.unwrap())
@@ -101,7 +97,7 @@ impl ArtistTree {
         }
     }
 
-    pub fn as_graph(&self) -> Graph<&str, f64> {
+    fn as_graph(&self) -> Graph<&str, f64> {
         // https://depth-first.com/articles/2020/02/03/graphs-in-rust-an-introduction-to-petgraph/
         let mut graph = Graph::new();
         for edge in self.edges.iter() {
@@ -129,28 +125,45 @@ impl ArtistTree {
         graph
     }
 
-    pub fn as_dot(&self) -> Result<()> {
+    pub fn as_dot(
+        &self,
+        fmt: DotOutput,
+    ) -> Result<()> {
         // echo {out} | fdp -Tsvg | display
 
         let g = &self.as_graph();
         let dot = Dot::new(g);
+        let ext = match fmt {
+            DotOutput::Png => "png",
+            DotOutput::Svg => "svg",
+        };
+        let f = format!("{}.{}", self.root, ext);
+
         let echo = Command::new("echo")
             .arg(dot.to_string())
             .stdout(Stdio::piped())
             .spawn()?;
-        let fdp = Command::new("fdp")
-            .arg("-T")
-            .arg("svg")
+        let _fdp = Command::new("fdp")
+            .args(["-T", ext])
             .stdin(Stdio::from(echo.stdout.unwrap()))
-            .stdout(Stdio::piped())
-            .spawn()?;
+            // .stdout(Stdio::piped())
+            .args(["-o", &f])
+            .spawn()?
+            .wait()?;
+
         Command::new("display")
-            .stdin(Stdio::from(fdp.stdout.unwrap()))
+            // .stdin(Stdio::from(fdp.stdout.unwrap()))
+            .arg(f)
             .spawn()?
             .wait()?;
 
         Ok(())
     }
+}
+
+pub enum DotOutput {
+    Png,
+    Svg,
 }
 
 impl Display for ArtistTree {
@@ -169,7 +182,7 @@ impl Display for ArtistTree {
 /// This struct is quite poorly implemented
 #[derive(Deserialize, Debug)]
 pub struct SimilarArtist {
-    pub name: String,
+    name: String,
     /// Preserved as `String`, in order to be able to implement `Eq`
     #[serde(rename = "match")]
     similarity: String,
@@ -237,12 +250,12 @@ impl SimilarArtist {
     }
 }
 
-impl Display for SimilarArtist {
-    fn fmt(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
-        write!(f, "{}", self.name)?;
-        Ok(())
-    }
-}
+// impl Display for SimilarArtist {
+//     fn fmt(
+//         &self,
+//         f: &mut std::fmt::Formatter<'_>,
+//     ) -> std::fmt::Result {
+//         write!(f, "{}", self.name)?;
+//         Ok(())
+//     }
+// }
