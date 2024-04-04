@@ -40,22 +40,23 @@ impl ArtistTree {
     // }
 
     pub fn build(&mut self) {
-        let maxdepth = 1;
+        let maxdepth = 2;
         for i in 0..=maxdepth {
             let ch = match i {
                 0 => SimilarArtist::new(&self.root).get_edges(),
                 _ => {
                     let parents: HashSet<_> =
                         HashSet::from_iter(self.edges.iter().map(|e| e.0.as_str()));
+                    let children = HashSet::from_iter(self.edges.iter().map(|e| e.1.as_str()));
 
-                    // all children
-                    HashSet::from_iter(self.edges.iter().map(|e| e.1.as_str()))
-                        // minus parents
+                    let nodes: HashSet<_> = parents.union(&children).collect();
+
+                    children
                         .difference(&parents)
                         .collect::<HashSet<_>>()
                         .iter()
-                        // .flat_map(|p| get_children(p))
                         .flat_map(|p| SimilarArtist::new(p).get_edges())
+                        .filter(|e| !nodes.contains(&e.1.as_str())) // remove cycles
                         .collect::<Vec<Edge>>()
                 }
             };
@@ -88,8 +89,8 @@ impl ArtistTree {
             graph.add_edge(n1, n2, *sim);
         }
 
-        // let dot = Dot::new(&graph);
-        // println!("{}", dot);
+        let dot = Dot::new(&graph);
+        println!("{}", dot);
 
         graph
     }
@@ -169,7 +170,7 @@ impl SimilarArtist {
     fn get_edges(&self) -> Vec<Edge> {
         self.get_similar()
             .into_iter()
-            .filter(|c| c.sim_gt(0.7))
+            .filter(|c| c.sim_gt(0.8))
             .map(|c| Edge(self.name.to_string(), c.name, c.similarity.parse().unwrap()))
             .collect()
     }
