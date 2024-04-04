@@ -40,7 +40,7 @@ pub struct ArtistTree {
 impl ArtistTree {
     /// Defaults to threshold 0.7, depth 2
     pub fn new(root: &str) -> Self {
-        let root = root.to_string();
+        let root = root.to_string().to_lowercase();
         let edges = vec![];
         let threshold = 0.7;
         let depth = 2;
@@ -200,7 +200,7 @@ impl PartialEq for SimilarArtist {
 impl SimilarArtist {
     fn new(name: &str) -> Self {
         Self {
-            name: name.to_string(),
+            name: name.to_string().to_lowercase(),
             similarity: "1.0".to_string(),
         }
     }
@@ -242,7 +242,13 @@ impl SimilarArtist {
                 similar
                     .into_iter()
                     .filter(|c| c.sim_gt(thresh))
-                    .map(|c| Edge(self.name.to_string(), c.name, c.similarity.parse().unwrap()))
+                    .map(|c| {
+                        Edge(
+                            self.name.to_string().to_lowercase(),
+                            c.name.to_lowercase(),
+                            c.similarity.parse().unwrap(),
+                        )
+                    })
                     .collect(),
             ),
             Err(_) => None,
