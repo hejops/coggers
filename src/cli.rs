@@ -38,9 +38,30 @@ enum Commands {
         #[arg(long, short)]
         transcode: bool,
     },
+
+    Lastfm {
+        #[arg(long, short)]
+        similar: String,
+    },
 }
 
 pub fn main() {
     let args = Cli::parse();
-    println!("{:?}", args);
+    match args.command {
+        Commands::Files { r#move: true, .. } => todo!(),
+        Commands::Files {
+            transcode: true, ..
+        } => {
+            // 11k, all skip: 0.2 s (rust), 0.6 s (python)
+            use crate::io::SOURCE;
+            use crate::transcode::SourceDir;
+            SourceDir::new(&SOURCE).unwrap().transcode_all().unwrap();
+        }
+        Commands::Lastfm { similar: artist } => {
+            let mut t = crate::lastfm::ArtistTree::new(&artist);
+            t.build();
+            t.as_dot(crate::lastfm::DotOutput::Svg).unwrap();
+        }
+        _ => unimplemented!(),
+    }
 }
