@@ -3,8 +3,13 @@
 // https://github.com/eliben/code-for-blog/blob/master/2021/rust-bst/src/nodehandle.rs
 use std::collections::HashSet;
 use std::env;
+use std::f64;
 use std::fmt::Display;
+use std::process::Command;
+use std::process::Stdio;
 
+use anyhow::Context;
+use anyhow::Result;
 use lazy_static::lazy_static;
 use petgraph::dot::Dot;
 use petgraph::graph::Graph;
@@ -23,13 +28,42 @@ pub struct Edge(String, String, f64);
 pub struct ArtistTree {
     root: String,
     pub edges: Vec<Edge>,
+
+    /// Default: 0.7
+    threshold: f64,
+    /// Default: 2
+    depth: u8,
 }
 
 impl ArtistTree {
+    /// Defaults to threshold 0.7, depth 2
     pub fn new(root: &str) -> Self {
         let root = root.to_string();
         let edges = vec![];
-        Self { root, edges }
+        let threshold = 0.7;
+        let depth = 2;
+        Self {
+            root,
+            edges,
+            threshold,
+            depth,
+        }
+    }
+
+    pub fn with_threshold(
+        mut self,
+        new: f64,
+    ) -> Self {
+        self.threshold = new;
+        self
+    }
+
+    pub fn with_depth(
+        mut self,
+        new: u8,
+    ) -> Self {
+        self.depth = new;
+        self
     }
 
     // fn contains(
@@ -40,10 +74,9 @@ impl ArtistTree {
     // }
 
     pub fn build(&mut self) {
-        let maxdepth = 2;
-        for i in 0..=maxdepth {
+        for i in 0..=self.depth {
             let ch = match i {
-                0 => SimilarArtist::new(&self.root).get_edges(),
+                0 => SimilarArtist::new(&self.root).get_edges(self.threshold),
                 _ => {
                     let parents: HashSet<_> =
                         HashSet::from_iter(self.edges.iter().map(|e| e.0.as_str()));
@@ -51,16 +84,20 @@ impl ArtistTree {
 
                     let nodes: HashSet<_> = parents.union(&children).collect();
 
-                    children
+                    let children = children
                         .difference(&parents)
                         .collect::<HashSet<_>>()
                         .iter()
-                        .flat_map(|p| SimilarArtist::new(p).get_edges())
+                        // damn is this ugly
+                        .map(|p| SimilarArtist::new(p).get_edges(self.threshold))
+                        .filter(|e| e.is_some())
+                        .flat_map(|e| e.unwrap())
                         .filter(|e| !nodes.contains(&e.1.as_str())) // remove cycles
-                        .collect::<Vec<Edge>>()
+                        .collect::<Vec<Edge>>();
+                    Some(children)
                 }
             };
-            self.edges.extend(ch);
+            self.edges.extend(ch.unwrap());
         }
     }
 
@@ -89,10 +126,30 @@ impl ArtistTree {
             graph.add_edge(n1, n2, *sim);
         }
 
-        let dot = Dot::new(&graph);
-        println!("{}", dot);
-
         graph
+    }
+
+    pub fn as_dot(&self) -> Result<()> {
+        // echo {out} | fdp -Tsvg | display
+
+        let g = &self.as_graph();
+        let dot = Dot::new(g);
+        let echo = Command::new("echo")
+            .arg(dot.to_string())
+            .stdout(Stdio::piped())
+            .spawn()?;
+        let fdp = Command::new("fdp")
+            .arg("-T")
+            .arg("svg")
+            .stdin(Stdio::from(echo.stdout.unwrap()))
+            .stdout(Stdio::piped())
+            .spawn()?;
+        Command::new("display")
+            .stdin(Stdio::from(fdp.stdout.unwrap()))
+            .spawn()?
+            .wait()?;
+
+        Ok(())
     }
 }
 
@@ -103,8 +160,6 @@ impl Display for ArtistTree {
     ) -> std::fmt::Result {
         for edge in self.edges.iter() {
             let Edge(n1, n2, _sim) = edge;
-            // let a1 = &self.nodes.get(*n1).unwrap().name;
-            // let a2 = &self.nodes.get(*n2).unwrap().name;
             writeln!(f, "{} -> {}", n1, n2)?;
         }
         Ok(())
@@ -144,35 +199,41 @@ impl SimilarArtist {
         self.similarity.parse::<f64>().unwrap() > x
     }
 
-    fn get_similar(&self) -> Vec<SimilarArtist> {
+    fn get_similar(&self) -> Result<Vec<SimilarArtist>> {
         let url = format!(
             "http://ws.audioscrobbler.com/2.0/?method=artist.getsimilar&artist={}&api_key={}&format=json", 
             self.name,
             *LASTFM_KEY
         );
 
-        let resp = reqwest::blocking::get(url).unwrap().text().unwrap();
-        let raw_json: Value = serde_json::from_str(&resp).unwrap();
-
-        if raw_json.get("similarartists").is_none() {
-            return vec![];
-        }
+        let resp = reqwest::blocking::get(url)?.text()?;
+        let raw_json: Value = serde_json::from_str(&resp)?;
 
         let sim = raw_json
             .get("similarartists")
-            .unwrap()
+            .context("no similarartists")?
             .get("artist")
             .unwrap();
-        serde_json::from_value(sim.clone()).unwrap()
+
+        Ok(serde_json::from_value(sim.clone())?)
     }
 
-    /// Get 1-level children of the node
-    fn get_edges(&self) -> Vec<Edge> {
-        self.get_similar()
-            .into_iter()
-            .filter(|c| c.sim_gt(0.8))
-            .map(|c| Edge(self.name.to_string(), c.name, c.similarity.parse().unwrap()))
-            .collect()
+    /// Get 1-level children of the node. This is done mainly to avoid making
+    /// excessive API calls to last.fm.
+    fn get_edges(
+        &self,
+        thresh: f64,
+    ) -> Option<Vec<Edge>> {
+        match self.get_similar() {
+            Ok(similar) => Some(
+                similar
+                    .into_iter()
+                    .filter(|c| c.sim_gt(thresh))
+                    .map(|c| Edge(self.name.to_string(), c.name, c.similarity.parse().unwrap()))
+                    .collect(),
+            ),
+            Err(_) => None,
+        }
     }
 }
 
