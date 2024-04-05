@@ -10,13 +10,14 @@ use std::path::Path;
 use anyhow::anyhow;
 use lazy_static::lazy_static;
 use ratatui::widgets::ListItem;
+use rusqlite::named_params;
 /* see also: https://github.com/matklad/once_cell, https://blog.logrocket.com/rust-lazy-static-pattern/#differences-between-lazy-static-oncecell-lazylock */
 use rusqlite::Connection;
 use rusqlite::Result;
 use walkdir::DirEntry;
 use walkdir::WalkDir;
 
-use crate::transcode::File;
+use crate::collection::Collection;
 
 // hyperfine 'find $MU >/dev/null'
 //   Time (mean ± σ):      1.123 s ±  0.003 s
@@ -77,18 +78,6 @@ impl Sort for DirEntry {
 
         files.sort_by(|a, b| a.as_str().cmp(b.as_str()));
         files
-    }
-}
-
-impl File {
-    pub fn new(f: &DirEntry) -> anyhow::Result<Self> {
-        assert!(f.file_type().is_file());
-        let path = f.as_str();
-        let tag = id3::Tag::read_from_path(path)?;
-        Ok(Self {
-            path: path.to_string(),
-            tags: tag,
-        })
     }
 }
 
@@ -218,7 +207,7 @@ impl LibraryDB {
     ///
     /// 9 min / 4 TB / 59 k albums (cold)
     /// 2 min / 4 TB / 59 k albums (warm)
-    pub fn dump(&self) -> rusqlite::Result<()> {
+    pub fn to_sql(&self) -> rusqlite::Result<()> {
         if Path::new(&self.db_path).exists() {
             fs::remove_file(&self.db_path).unwrap();
         };
@@ -246,6 +235,47 @@ impl LibraryDB {
                 "INSERT INTO albums (artist, album, year) values (?1, ?2, ?3)",
                 [a.artist, a.album, a.year.to_string()],
             )?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Collection {
+    pub fn to_sql(&self) -> rusqlite::Result<()> {
+        let p = "foo.db";
+        if Path::new(p).exists() {
+            fs::remove_file(p).unwrap();
+        };
+        let conn = Connection::open(p)?;
+
+        conn.execute(
+            "create table if not exists albums (
+             artist text not null,
+             album text not null,
+             year integer not null,
+             genres text not null,
+             rating integer not null
+         )",
+            [],
+        )?;
+
+        let mut stmt = conn.prepare(
+            "INSERT INTO 
+                albums ( artist,  album,  year,  genres,  rating)
+                values (:artist, :album, :year, :genres, :rating)",
+        )?;
+
+        for a in self.releases.iter() {
+            stmt.execute(named_params! {
+
+            ":album":     a.basic_information.title.clone(),
+            ":artist":    a.basic_information.artists[0].name.clone(),
+            ":genres":    a.basic_information.genres.join(", "),
+            ":rating":    a.rating.to_string(),
+            ":year":      a.basic_information.year.to_string(),
+
+            })?;
         }
 
         Ok(())
