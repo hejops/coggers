@@ -14,6 +14,7 @@ use std::process::Stdio;
 
 use anyhow::Context;
 use anyhow::Result;
+use itertools::Itertools;
 use lazy_static::lazy_static;
 use petgraph::dot::Dot;
 use petgraph::graph::Graph;
@@ -174,7 +175,7 @@ impl ArtistTree {
     pub fn as_dot(
         &mut self,
         fmt: DotOutput,
-    ) -> Result<()> {
+    ) -> Result<String> {
         // echo {out} | <fdp|dot> -Tsvg | display
 
         let g = &self.build();
@@ -183,7 +184,8 @@ impl ArtistTree {
             DotOutput::Png => "png",
             DotOutput::Svg => "svg",
         };
-        let f = format!("{}.{}", self.root, ext);
+
+        // let out = format!("{}.{}", self.root, ext);
 
         let echo = Command::new("echo")
             .arg(dot.to_string())
@@ -193,17 +195,58 @@ impl ArtistTree {
             .args(["-T", ext])
             .stdin(Stdio::from(echo.stdout.unwrap()))
             // .stdout(Stdio::piped())
-            .args(["-o", &f])
-            .spawn()?
-            .wait()?;
+            // .args(["-o", &out])
+            .output()?
+            .stdout;
 
-        Command::new("display")
-            // .stdin(Stdio::from(fdp.stdout.unwrap()))
-            .arg(f)
-            .spawn()?
-            .wait()?;
+        // https://stackoverflow.com/a/42993724
+        Ok(String::from_utf8_lossy(&_fdp).to_string())
 
-        Ok(())
+        // Ok(_fdp)
+
+        // Command::new("display")
+        //     // .stdin(Stdio::from(fdp.stdout.unwrap()))
+        //     .arg(out)
+        //     .spawn()?
+        //     .wait()?;
+
+        // Ok(())
+    }
+
+    pub fn as_html(&mut self) -> String {
+        let graph = self
+            .as_dot(DotOutput::Svg)
+            .unwrap()
+            .lines()
+            .skip(3)
+            .join("\n");
+
+        let links = self
+            .nodes
+            .keys()
+            .map(|n| {
+                format!(
+                    r#"<p><a href="https://last.fm/music/{}">{}</a></p>"#,
+                    n.replace(' ', "+"),
+                    n
+                )
+            })
+            .join("\n");
+
+        format!(
+            r#"
+<!doctype html>
+<html>
+  <body>
+    <h1>{}</h1>
+    {}
+  </body>
+  {}
+</html>"#,
+            self.root.clone(),
+            graph,
+            links,
+        )
     }
 }
 
@@ -254,28 +297,4 @@ impl SimilarArtist {
 
         Ok(serde_json::from_value::<Vec<SimilarArtist>>(sim.clone())?)
     }
-
-    // /// Get 1-level children of the node. This is done mainly to avoid making
-    // /// excessive API calls to last.fm.
-    // fn get_edges(
-    //     &self,
-    //     thresh: f64,
-    // ) -> Option<Vec<Edge>> {
-    //     match self.get_similar() {
-    //         Ok(similar) => Some(
-    //             similar
-    //                 .iter()
-    //                 .filter(|c| c.sim_gt(thresh))
-    //                 .map(|c| {
-    //                     Edge(
-    //                         self.name.to_string().to_lowercase(),
-    //                         c.name.to_lowercase(),
-    //                         c.similarity.parse().unwrap(),
-    //                     )
-    //                 })
-    //                 .collect(),
-    //         ),
-    //         Err(_) => None,
-    //     }
-    // }
 }
